@@ -24,6 +24,8 @@ export interface SwapRequest {
   deadline?: number;
   /** Optional recipient address */
   to?: string;
+  /** Optional pre-fetched quote to execute against without re-fetching reserves */
+  quote?: SwapQuote;
 }
 
 /**
@@ -101,7 +103,7 @@ export interface MultiHopSwapRequest {
   path: string[];
   /** Input amount (in tokenIn's smallest unit). */
   amount: bigint;
-  /** Trade direction — only EXACT_IN is supported for multi-hop. */
+  /** Trade direction (EXACT_IN or EXACT_OUT). */
   tradeType: TradeType;
   /** Slippage tolerance in basis points. */
   slippageBps?: number;

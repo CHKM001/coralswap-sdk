@@ -36,6 +36,7 @@ export {
   NetworkConfig,
   NETWORK_CONFIGS,
   DEFAULTS,
+  DEFAULT_SLIPPAGE,
   PRECISION,
 } from "@/config";
 
@@ -74,6 +75,7 @@ export {
   parseTokenAmount,
   fromSorobanAmount,
   formatAmount,
+  formatLargeNumber,
   toBps,
   applyBps,
   percentDiff,
@@ -95,6 +97,8 @@ export {
   getSimulationReturnValue,
   getResourceEstimate,
   exceedsBudget,
+  decodeDiagnosticEvents,
+  buildSimulationResult,
   withRetry,
   isRetryable,
   sleep,
@@ -105,6 +109,10 @@ export {
   validateDistinctTokens,
 
   isValidPath,
+  EventParser,
+  EVENT_TOPICS,
+  decodeEvents,
+  decodeEventsFromXdr,
 } from './utils';
 
 
@@ -113,6 +121,7 @@ export type {
   SimulationResult,
   SimulationResourceEstimate,
   WaitNextLedgerOptions,
+  DecodeEventsOptions,
 } from "./utils";
 
 // Errors

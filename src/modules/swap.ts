@@ -109,7 +109,7 @@ export class SwapModule {
 
     const rawPath = this.resolvePath(request);
     const path = rawPath.map((t) => resolveTokenIdentifier(t, passphrase));
-    const quote = await this.getQuote(request);
+    const quote = request.quote ?? await this.getQuote(request);
 
     let op: import("@stellar/stellar-sdk").xdr.Operation;
 
@@ -172,8 +172,7 @@ export class SwapModule {
    *
    * @param request - Multi-hop swap request with required path.
    * @returns Quote including per-hop fee, amount, and price impact breakdown.
-   * @throws {ValidationError} If path has fewer than 3 tokens or trade type
-   *   is not EXACT_IN.
+   * @throws {ValidationError} If path has fewer than 3 tokens.
    * @throws {PairNotFoundError} If any intermediate pair does not exist.
    * @example
    * const quote = await client.swap.getMultiHopQuote({ path: ['A', 'B', 'C'], amount: 100n, tradeType: TradeType.EXACT_IN });
@@ -191,17 +190,13 @@ export class SwapModule {
 
     path.forEach((addr, i) => validateAddress(addr, `path[${i}]`));
 
-    if (request.tradeType !== TradeType.EXACT_IN) {
-      throw new ValidationError(
-        "Multi-hop routing only supports EXACT_IN trade type",
-        { tradeType: request.tradeType },
-      );
-    }
-
-    const hops = await this.computeHops(request.amount, path);
+    const hops =
+      request.tradeType === TradeType.EXACT_OUT
+        ? await this.computeHopsReverse(request.amount, path)
+        : await this.computeHops(request.amount, path);
 
     const totalFeeAmount = hops.reduce((acc, h) => acc + h.feeAmount, 0n);
-    const totalFeeBps = hops.reduce((acc, h) => acc + h.feeBps, 0);
+    const totalFeeBps = this.computeCompoundedFeeBps(hops.map((h) => h.feeBps));
     const compoundImpactBps = this.compoundPriceImpact(
       hops.map((h) => h.priceImpactBps),
     );
@@ -458,19 +453,14 @@ export class SwapModule {
     request: SwapRequest,
     path: string[],
   ): Promise<SwapQuote> {
-    if (request.tradeType !== TradeType.EXACT_IN) {
-      // Exact-out multi-hop requires reverse path computation; not supported in v1.
-      throw new ValidationError(
-        "Multi-hop routing only supports EXACT_IN trade type",
-        { tradeType: request.tradeType },
-      );
-    }
-
-    const hops = await this.computeHops(request.amount, path);
+    const hops =
+      request.tradeType === TradeType.EXACT_OUT
+        ? await this.computeHopsReverse(request.amount, path)
+        : await this.computeHops(request.amount, path);
 
     // Aggregate totals
     const totalFeeAmount = hops.reduce((acc, h) => acc + h.feeAmount, 0n);
-    const totalFeeBps = hops.reduce((acc, h) => acc + h.feeBps, 0);
+    const totalFeeBps = this.computeCompoundedFeeBps(hops.map((h) => h.feeBps));
 
     // Compound price impact: 1 - product(1 - impact_i)
     const compoundImpactBps = this.compoundPriceImpact(
@@ -499,6 +489,81 @@ export class SwapModule {
       path,
       deadline: request.deadline ?? this.client.getDeadline(),
     };
+  }
+
+  /**
+   * Reverse hop computation for EXACT_OUT trades.
+   *
+   * Traverses the path from output token to input token, computing
+   * `getAmountIn()` at each hop in reverse order. Returns hops in
+   * forward order (path[0]→path[1], path[1]→path[2], …).
+   *
+   * @param amountOut - Desired output amount (in the final token's smallest unit).
+   * @param path - Ordered token addresses describing the route.
+   * @returns HopResult array in forward path order.
+   * @throws {PairNotFoundError} If any pair in the path is not registered.
+   * @throws {InsufficientLiquidityError} If any pair has zero reserves or
+   *   the required output exceeds reserves.
+   */
+  async computeHopsReverse(amountOut: bigint, path: string[]): Promise<HopResult[]> {
+    const hops: HopResult[] = new Array(path.length - 1);
+    let currentAmountOut = amountOut;
+
+    for (let i = path.length - 2; i >= 0; i--) {
+      const tokenIn = path[i];
+      const tokenOut = path[i + 1];
+
+      const pairAddress = await this.client.getPairAddress(tokenIn, tokenOut);
+      if (!pairAddress) {
+        throw new PairNotFoundError(tokenIn, tokenOut);
+      }
+
+      const pair = this.client.pair(pairAddress);
+      const [reserves, feeBps] = await Promise.all([
+        pair.getReserves(),
+        pair.getDynamicFee(),
+      ]);
+
+      const isToken0In = await this.isToken0(pair, tokenIn);
+      const reserveIn = isToken0In ? reserves.reserve0 : reserves.reserve1;
+      const reserveOut = isToken0In ? reserves.reserve1 : reserves.reserve0;
+
+      if (reserveIn === 0n || reserveOut === 0n) {
+        throw new InsufficientLiquidityError(pairAddress, {
+          tokenIn,
+          tokenOut,
+        });
+      }
+
+      const amountIn = this.getAmountIn(
+        currentAmountOut,
+        reserveIn,
+        reserveOut,
+        feeBps,
+      );
+      const feeAmount =
+        (amountIn * BigInt(feeBps)) / PRECISION.BPS_DENOMINATOR;
+      const priceImpactBps = this.calculatePriceImpact(
+        amountIn,
+        currentAmountOut,
+        reserveIn,
+        reserveOut,
+      );
+
+      hops[i] = {
+        tokenIn,
+        tokenOut,
+        amountIn,
+        amountOut: currentAmountOut,
+        feeBps,
+        feeAmount,
+        priceImpactBps,
+      };
+
+      currentAmountOut = amountIn;
+    }
+
+    return hops;
   }
 
   /**
@@ -581,6 +646,21 @@ export class SwapModule {
       product *= 1 - bps / 10000;
     }
     return Math.round((1 - product) * 10000);
+  }
+
+  /**
+   * Compound fees across all hops and return effective fee in basis points.
+   */
+  computeCompoundedFeeBps(feesBps: number[]): number {
+    let remainingRatio = 10000n;
+
+    for (const feeBps of feesBps) {
+      remainingRatio =
+        (remainingRatio * (PRECISION.BPS_DENOMINATOR - BigInt(feeBps))) /
+        PRECISION.BPS_DENOMINATOR;
+    }
+
+    return Number(PRECISION.BPS_DENOMINATOR - remainingRatio);
   }
 
   /**

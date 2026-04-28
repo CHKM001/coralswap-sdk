@@ -10,7 +10,14 @@ import {
   calculateRepayment,
   validateFeeFloor,
 } from "@/contracts/flash-receiver";
-import { FlashLoanError, TransactionError } from "@/errors";
+import {
+  CoralSwapSDKError,
+  FlashLoanError,
+  NetworkError,
+  RpcError,
+  TransactionError,
+  mapError,
+} from "@/errors";
 import { validateAddress, validatePositiveAmount } from "@/utils/validation";
 
 /**
@@ -59,6 +66,15 @@ export class FlashLoanModule {
       );
     }
 
+    const feeFloorBps = Number(config.flashFeeFloor);
+
+    if (!validateFeeFloor(config.flashFeeBps, feeFloorBps)) {
+      throw new FlashLoanError("Flash loan fee below protocol floor", {
+        feeBps: config.flashFeeBps,
+        feeFloor: config.flashFeeFloor,
+      });
+    }
+
     const feeAmount = (amount * BigInt(config.flashFeeBps)) / BigInt(10000);
     const feeFloorAmount = BigInt(config.flashFeeFloor);
     const actualFee = feeAmount > feeFloorAmount ? feeAmount : feeFloorAmount;
@@ -105,7 +121,9 @@ export class FlashLoanModule {
       );
     }
 
-    if (!validateFeeFloor(config.flashFeeBps, DEFAULTS.flashFeeFloorBps)) {
+    const feeFloorBps = Number(config.flashFeeFloor);
+
+    if (!validateFeeFloor(config.flashFeeBps, feeFloorBps)) {
       throw new FlashLoanError("Flash loan fee below protocol floor", {
         feeBps: config.flashFeeBps,
         feeFloor: DEFAULTS.flashFeeFloorBps,
@@ -169,9 +187,23 @@ export class FlashLoanModule {
     try {
       const config = await this.getConfig(pairAddress);
       return !config.locked;
-    } catch {
+    } catch (error) {
+      const mappedError = mapError(error);
+
+      if (this.isUnavailableError(mappedError)) {
+        return false;
+      }
+
+      throw mappedError;
+    }
+  }
+
+  private isUnavailableError(error: CoralSwapSDKError): boolean {
+    if (error instanceof NetworkError || error instanceof RpcError) {
       return false;
     }
+
+    return error.code === "PAIR_NOT_FOUND";
   }
 
   /**

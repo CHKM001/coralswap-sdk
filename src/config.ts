@@ -40,7 +40,7 @@ export interface CoralSwapConfig {
   maxRetries?: number;
   /** Maximum delay between retry attempts */
   retryDelayMs?: number;
-  /** Maximum delay between retry attempts for exponential backoff */
+  /** Maximum delay in milliseconds between retry attempts */
   maxRetryDelayMs?: number;
   pollingStrategy?: PollingStrategy;
   pollingIntervalMs?: number;
@@ -67,6 +67,13 @@ export const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     routerAddress: "",
     sorobanTimeout: 30,
   },
+  [Network.STAGING]: {
+    rpcUrl: "https://soroban-testnet.stellar.org",
+    networkPassphrase: "Test SDF Network ; September 2015",
+    factoryAddress: "",
+    routerAddress: "",
+    sorobanTimeout: 30,
+  },
 };
 
 /**
@@ -77,7 +84,7 @@ export const DEFAULTS = {
   deadlineSec: 1200,
   maxRetries: 3,
   retryDelayMs: 1000,
-  maxRetryDelayMs: 10000,
+  maxRetryDelayMs: 30_000,
   pollingStrategy: PollingStrategy.LINEAR,
   pollingIntervalMs: 1000,
   maxPollingAttempts: 30,
