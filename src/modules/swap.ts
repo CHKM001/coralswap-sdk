@@ -21,6 +21,7 @@ import {
   validatePositiveAmount,
   validateSlippage,
   validateDistinctTokens,
+  isValidPath,
 } from '@/utils/validation';
 import { resolveTokenIdentifier } from '@/utils/addresses';
 
