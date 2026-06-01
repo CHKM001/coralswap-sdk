@@ -151,6 +151,19 @@ export class ValidationError extends CoralSwapSDKError {
 }
 
 /**
+ * Event decoding specific error.
+ * Includes the event type that failed to decode.
+ */
+export class EventDecodeError extends ValidationError {
+  readonly eventType: string;
+  constructor(eventType: string, message?: string) {
+    super(message ?? `Failed to decode event ${eventType}`);
+    this.name = "EventDecodeError";
+    this.eventType = eventType;
+  }
+}
+
+/**
  * Flash loan specific errors.
  */
 export class FlashLoanError extends CoralSwapSDKError {

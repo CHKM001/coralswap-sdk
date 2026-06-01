@@ -10,7 +10,7 @@ import {
   SyncEvent,
   FeeUpdateEvent,
 } from "@/types/events";
-import { ValidationError } from "@/errors";
+import { ValidationError, EventDecodeError } from "@/errors";
 
 /** Response type that may include hash/id for transaction identifier. */
 type TxWithOptionalHash = SorobanRpc.Api.GetSuccessfulTransactionResponse & {
@@ -253,7 +253,7 @@ export class EventParser {
    * Decode a single DiagnosticEvent. Returns null when the event is not a
    * recognised CoralSwap event (unknown topic or filtered contract).
    */
-  private decodeSingle(
+  public decodeSingle(
     evt: xdr.DiagnosticEvent,
     txHash: string,
     ledger: number,
@@ -277,8 +277,7 @@ export class EventParser {
       return null;
     }
 
-    if (topics.length === 0) return null;
-
+    if (topics.length !== 1) throw new EventDecodeError('unknown', "Incorrect number of topics");
     const topicName = decodeString(topics[0]);
     if (!KNOWN_TOPICS.has(topicName)) return null;
 
@@ -539,4 +538,22 @@ export function decodeEventsFromXdr(
     return parser.parseStrict(events, txHash, ledger);
   }
   return parser.parse(events, txHash, ledger);
+}
+
+/**
+ * Decode a single raw DiagnosticEvent into a typed CoralSwapEvent.
+ * Throws {@link EventDecodeError} if the event cannot be decoded.
+ */
+export function decodeEvent(
+  raw: xdr.DiagnosticEvent,
+  txHash: string = "",
+  ledger: number = 0,
+  contractIds: string[] = [],
+): CoralSwapEvent {
+  const parser = new EventParser(contractIds);
+  const ev = parser.decodeSingle(raw, txHash, ledger);
+  if (!ev) {
+    throw new EventDecodeError('unknown', 'Failed to decode event');
+  }
+  return ev;
 }
