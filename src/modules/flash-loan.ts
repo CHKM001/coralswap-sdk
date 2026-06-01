@@ -84,7 +84,7 @@ export class FlashLoanModule {
       amount,
       feeBps: config.flashFeeBps,
       feeAmount: actualFee,
-      feeFloor: DEFAULTS.flashFeeFloorBps,
+      feeFloor: Number(config.flashFeeFloor),
     };
   }
 
@@ -121,12 +121,10 @@ export class FlashLoanModule {
       );
     }
 
-    const feeFloorBps = Number(config.flashFeeFloor);
-
-    if (!validateFeeFloor(config.flashFeeBps, feeFloorBps)) {
+    if (!validateFeeFloor(config.flashFeeBps, Number(config.flashFeeFloor))) {
       throw new FlashLoanError("Flash loan fee below protocol floor", {
         feeBps: config.flashFeeBps,
-        feeFloor: DEFAULTS.flashFeeFloorBps,
+        feeFloor: config.flashFeeFloor,
       });
     }
 
