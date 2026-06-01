@@ -330,7 +330,8 @@ export function mapError(err: unknown): CoralSwapSDKError {
     message.includes("ECONNRESET") ||
     message.includes("ETIMEDOUT") ||
     message.includes("ENOTFOUND") ||
-    message.includes("ENETUNREACH")
+    message.includes("ENETUNREACH") ||
+    normalizedMessage.includes("network error")
   ) {
     return new NetworkError(message);
   }
@@ -379,6 +380,7 @@ export function mapError(err: unknown): CoralSwapSDKError {
   if (
     normalizedMessage.includes("pair not found") ||
     normalizedMessage.includes("no pair") ||
+    normalizedMessage.includes("contract not found") ||
     message.includes("PAIR_NOT_FOUND")
   ) {
     return new PairNotFoundError("unknown", "unknown");

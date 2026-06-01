@@ -15,7 +15,20 @@ const TOKEN_B = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4';
 const PAIR_ADDR = 'CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526';
 const USER_ADDR = TOKEN_A;
 
-function makeSuccessSimResult(minResourceFee = '100') {
+type MockSimResult = {
+  success: boolean;
+  returnValue: null;
+  auth: never[];
+  minResourceFee: string;
+  cost: null;
+  transactionData: null;
+  latestLedger: number;
+  events: never[];
+  error: string | null;
+  raw: any;
+};
+
+function makeSuccessSimResult(minResourceFee = '100'): MockSimResult {
   return {
     success: true,
     returnValue: null,
@@ -30,7 +43,7 @@ function makeSuccessSimResult(minResourceFee = '100') {
   };
 }
 
-function makeFailSimResult(error = 'contract trapped') {
+function makeFailSimResult(error = 'contract trapped'): MockSimResult {
   return {
     success: false,
     returnValue: null,
@@ -96,7 +109,7 @@ describe('estimateGas()', () => {
 // SwapModule – estimateOnly
 // ---------------------------------------------------------------------------
 
-function createSwapClient(simResult = makeSuccessSimResult('200')): CoralSwapClient {
+function createSwapClient(simResult: MockSimResult = makeSuccessSimResult('200')): CoralSwapClient {
   return {
     networkConfig: { networkPassphrase: 'Test SDF Network ; September 2015' },
     config: {},
@@ -146,7 +159,7 @@ describe('SwapModule.execute({ estimateOnly: true })', () => {
 // LiquidityModule – estimateOnly (addLiquidity / removeLiquidity)
 // ---------------------------------------------------------------------------
 
-function createLiquidityClient(simResult = makeSuccessSimResult('300')): CoralSwapClient {
+function createLiquidityClient(simResult: MockSimResult = makeSuccessSimResult('300')): CoralSwapClient {
   return {
     networkConfig: {},
     config: {},
@@ -225,7 +238,7 @@ describe('LiquidityModule.removeLiquidity({ estimateOnly: true })', () => {
 // FlashLoanModule – estimateOnly
 // ---------------------------------------------------------------------------
 
-function createFlashLoanClient(simResult = makeSuccessSimResult('400')): CoralSwapClient {
+function createFlashLoanClient(simResult: MockSimResult = makeSuccessSimResult('400')): CoralSwapClient {
   return {
     networkConfig: {},
     config: {},

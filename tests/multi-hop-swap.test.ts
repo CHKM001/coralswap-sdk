@@ -257,16 +257,18 @@ describe('Multi-hop swap routing', () => {
       ).rejects.toBeInstanceOf(PairNotFoundError);
     });
 
-    it('throws ValidationError for EXACT_OUT multi-hop (not supported)', async () => {
-      await expect(
-        swap.getQuote({
-          tokenIn: TOKEN_A,
-          tokenOut: TOKEN_C,
-          amount: 1_000_000n,
-          tradeType: TradeType.EXACT_OUT,
-          path: [TOKEN_A, TOKEN_B, TOKEN_C],
-        }),
-      ).rejects.toBeInstanceOf(ValidationError);
+    it('supports EXACT_OUT multi-hop quotes with the configured path', async () => {
+      const quote = await swap.getQuote({
+        tokenIn: TOKEN_A,
+        tokenOut: TOKEN_C,
+        amount: 1_000_000n,
+        tradeType: TradeType.EXACT_OUT,
+        path: [TOKEN_A, TOKEN_B, TOKEN_C],
+      });
+
+      expect(quote.path).toEqual([TOKEN_A, TOKEN_B, TOKEN_C]);
+      expect(quote.amountOut).toBe(1_000_000n);
+      expect(quote.amountIn).toBeGreaterThan(quote.amountOut);
     });
   });
 
