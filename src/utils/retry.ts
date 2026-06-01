@@ -1,5 +1,4 @@
 import { Logger } from "@/types/common";
-import { DEFAULTS } from "@/config";
 
 export class CircuitOpenError extends Error {
   readonly label: string;
@@ -27,7 +26,6 @@ export class DeadlineError extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
-
 
 export type CircuitState = "closed" | "open" | "half-open";
 
@@ -157,8 +155,8 @@ export interface RetryConfig {
 }
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  maxRetries: DEFAULTS.maxRetries,
-  baseDelayMs: DEFAULTS.retryDelayMs,
+  maxRetries: 3,
+  baseDelayMs: 1000,
   backoffMultiplier: 2,
   maxDelayMs: 30_000,
 };
@@ -178,7 +176,6 @@ function normalizeRetryConfig(options: RetryOptions): RetryConfig {
     circuitBreaker: options.circuitBreaker,
   };
 }
-
 
 export async function withRetry<T>(
   fn: () => Promise<T>,
