@@ -1,0 +1,144 @@
+/**
+ * @coralswap/sdk -- TypeScript SDK for CoralSwap Protocol
+ *
+ * Contract-first AMM SDK for Stellar/Soroban.
+ * Interacts directly with on-chain Soroban contracts without
+ * intermediary APIs, using auto-generated contract bindings.
+ *
+ * @example
+ * ```ts
+ * import { CoralSwapClient, Network, TradeType } from '@coralswap/sdk';
+ *
+ * const client = new CoralSwapClient({
+ *   network: Network.TESTNET,
+ *   secretKey: 'S...',
+ * });
+ *
+ * const swap = client.swap();
+ * const quote = await swap.getQuote({
+ *   tokenIn: 'CDLZ...',
+ *   tokenOut: 'CBQH...',
+ *   amount: 1000000n,
+ *   tradeType: TradeType.EXACT_IN,
+ * });
+ * ```
+ *
+ * @packageDocumentation
+ */
+
+// Core client
+export { CoralSwapClient } from "@/client";
+export { KeypairSigner } from "@/utils/signer";
+
+// Configuration
+export {
+  CoralSwapConfig,
+  NetworkConfig,
+  NETWORK_CONFIGS,
+  DEFAULTS,
+  DEFAULT_SLIPPAGE,
+  PRECISION,
+} from "@/config";
+
+// Type exports
+export * from "@/types";
+export type { Logger } from "@/types/common";
+
+// Contract clients
+export {
+  FactoryClient,
+  PairClient,
+  RouterClient,
+  LPTokenClient,
+  encodeFlashLoanData,
+  decodeFlashLoanData,
+  calculateRepayment,
+  validateFeeFloor,
+} from "@/contracts";
+
+// Feature modules
+export {
+  SwapModule,
+  LiquidityModule,
+  FlashLoanModule,
+  FeeModule,
+  OracleModule,
+  TokenListModule,
+  RouterModule,
+} from "@/modules";
+export type { OptimalPath } from "@/modules/router";
+export type { TWAPObservation, TWAPResult } from "@/modules";
+
+// Utilities
+export {
+  toSorobanAmount,
+  parseTokenAmount,
+  fromSorobanAmount,
+  formatAmount,
+  formatLargeNumber,
+  toBps,
+  applyBps,
+  percentDiff,
+  safeMul,
+  safeDiv,
+  minBigInt,
+  maxBigInt,
+  isValidPublicKey,
+  isValidContractId,
+  isValidAddress,
+  isNativeToken,
+  getNativeAssetContractAddress,
+  resolveTokenIdentifier,
+  sortTokens,
+  truncateAddress,
+  toScAddress,
+  getPairAddress,
+  isSimulationSuccess,
+  getSimulationReturnValue,
+  getResourceEstimate,
+  exceedsBudget,
+  decodeDiagnosticEvents,
+  buildSimulationResult,
+  withRetry,
+  isRetryable,
+  sleep,
+  validateAddress,
+  validatePositiveAmount,
+  validateNonNegativeAmount,
+  validateSlippage,
+  validateDistinctTokens,
+
+  isValidPath,
+  EventParser,
+  EVENT_TOPICS,
+  decodeEvents,
+  decodeEventsFromXdr,
+  filterEvents,
+} from './utils';
+
+export type {
+  RetryConfig,
+  SimulationResult,
+  SimulationResourceEstimate,
+  WaitNextLedgerOptions,
+  DecodeEventsOptions,
+  EventFilter,
+} from "./utils";
+
+// Errors
+export {
+  CoralSwapSDKError,
+  NetworkError,
+  RpcError,
+  SimulationError,
+  TransactionError,
+  DeadlineError,
+  SlippageError,
+  InsufficientLiquidityError,
+  PairNotFoundError,
+  ValidationError,
+  FlashLoanError,
+  CircuitBreakerError,
+  SignerError,
+  mapError,
+} from "@/errors";
