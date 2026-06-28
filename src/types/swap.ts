@@ -95,7 +95,6 @@ export interface SwapRequest {
   tradeType: TradeType;
   /** Optional explicit routing path. Tokens are Soroban contract addresses. */
   path?: string[];
-  /** Optional slippage tolerance in basis points */
   slippageBps?: number;
   /** Optional deadline as Unix timestamp */
   deadline?: number;
@@ -117,13 +116,9 @@ export interface SwapRequest {
  * Per-hop calculation result used internally during multi-hop routing.
  */
 export interface HopResult {
-  /** The address of the input token for this hop */
   tokenIn: string;
-  /** The address of the output token for this hop */
   tokenOut: string;
-  /** The input amount for this hop */
   amountIn: bigint;
-  /** The output amount for this hop */
   amountOut: bigint;
   /** Fee charged on this hop in basis points. */
   feeBps: number;

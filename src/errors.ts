@@ -152,6 +152,10 @@ export class ValidationError extends CoralSwapSDKError {
 
 /**
  * Flash loan specific errors.
+ *
+ * When the contract emits a FlashLoanFailed event, the decoded details are
+ * attached as `event` so callers can inspect borrowedAmount and reason without
+ * manually parsing XDR.
  */
 export class FlashLoanError extends CoralSwapSDKError {
   constructor(message: string, details?: Record<string, unknown>) {

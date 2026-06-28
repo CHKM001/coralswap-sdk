@@ -1,27 +1,15 @@
-import { CoralSwapClient } from "@/client";
+import { xdr, scValToNative, Address, SorobanRpc } from '@stellar/stellar-sdk';
+import { CoralSwapClient } from '../client';
 import {
   FlashLoanRequest,
   FlashLoanResult,
   FlashLoanFeeEstimate,
-  FlashLoanFeeComparison,
-  FlashLoanEventData,
-} from "@/types/flash-loan";
-import { FlashLoanConfig } from "@/types/pool";
-import { GasEstimate } from "@/types/gas";
-import {
-  calculateRepayment,
-  validateFeeFloor,
-} from "@/contracts/flash-receiver";
-import {
-  FlashLoanError,
-  TransactionError,
-} from "@/errors";
-import { FeeModule } from "@/modules/fees";
-import { validateAddress, validatePositiveAmount } from "@/utils/validation";
-import { estimateGas } from "@/utils/gas";
-import { DEFAULTS } from "@/config";
-import { decodeEvents } from "@/utils/events";
-import { SorobanRpc } from "@stellar/stellar-sdk";
+  FlashLoanExecutedEvent,
+  FlashLoanFailedEvent,
+} from '../types/flash-loan';
+import { FlashLoanConfig } from '../types/pool';
+import { calculateRepayment, validateFeeFloor } from '../contracts/flash-receiver';
+import { FlashLoanError } from '../errors';
 
 /**
  * Flash Loan module -- first-class flash loan support for CoralSwap.
@@ -69,15 +57,6 @@ export class FlashLoanModule {
       );
     }
 
-    const feeFloorBps = DEFAULTS.flashFeeFloorBps;
-
-    if (!validateFeeFloor(config.flashFeeBps, feeFloorBps)) {
-      throw new FlashLoanError("Flash loan fee below protocol floor", {
-        feeBps: config.flashFeeBps,
-        feeFloor: config.flashFeeFloor,
-      });
-    }
-
     const feeAmount = (amount * BigInt(config.flashFeeBps)) / BigInt(10000);
     const feeFloorAmount = BigInt(config.flashFeeFloor);
     const actualFee = feeAmount > feeFloorAmount ? feeAmount : feeFloorAmount;
@@ -87,80 +66,31 @@ export class FlashLoanModule {
       amount,
       feeBps: config.flashFeeBps,
       feeAmount: actualFee,
-      feeFloor: Number(config.flashFeeFloor),
+      feeFloor: config.flashFeeFloor,
     };
   }
 
   /**
-   * Compare the flash loan fee against the current dynamic swap fee for a
-   * pair and amount.
+   * Execute a flash loan transaction.
    *
-   * Arbitrageurs use this to decide whether borrowing via a flash loan is
-   * cheaper than routing capital through a direct swap before committing to
-   * a strategy. Both fees are fetched in parallel and reduced to absolute
-   * token amounts using `(amount * feeBps) / 10000n`.
+   * After submission the full transaction meta is fetched and Soroban events
+   * are decoded. A `FlashLoanExecuted` event is attached to the returned
+   * `FlashLoanResult`. If a `FlashLoanFailed` event is present, a
+   * `FlashLoanError` is thrown with the decoded event details.
    *
-   * @param pair - The address of the pair contract to compare fees for
-   * @param amount - The notional amount the strategy would move (must be > 0)
-   * @returns The two effective fees and which option is cheaper
-   * @throws {ValidationError} If `pair` is invalid or `amount` is zero/negative
-   * @example
-   * const cmp = await client.flashLoans.compareFees('C...', 1_000_000n);
-   * if (cmp.cheaperOption === 'flashLoan') {
-   *   // borrow via flash loan
-   * }
-   */
-  async compareFees(
-    pair: string,
-    amount: bigint,
-  ): Promise<FlashLoanFeeComparison> {
-    validateAddress(pair, "pair");
-    validatePositiveAmount(amount, "amount");
-
-    const fees = new FeeModule(this.client);
-
-    // Fetch the flash loan fee (fee_bps) and the dynamic swap fee in parallel.
-    const [config, swapEstimate] = await Promise.all([
-      this.getConfig(pair),
-      fees.estimateSwapFee(pair, amount),
-    ]);
-
-    // Reduce both fees to absolute token amounts on the same basis-points
-    // formula so the comparison is apples-to-apples.
-    const flashLoanFee = (amount * BigInt(config.flashFeeBps)) / 10000n;
-    const swapFee = swapEstimate.feeAmount;
-
-    let cheaperOption: FlashLoanFeeComparison["cheaperOption"];
-    if (flashLoanFee < swapFee) {
-      cheaperOption = "flashLoan";
-    } else if (swapFee < flashLoanFee) {
-      cheaperOption = "swap";
-    } else {
-      cheaperOption = "equal";
-    }
-
-    return { flashLoanFee, swapFee, cheaperOption };
-  }
-
-  /**
-   * Execute a flash loan transaction, or estimate its fee.
-   *
-   * Pass `{ estimateOnly: true }` to dry-run the simulation and return a
-   * {@link GasEstimate} without submitting.
+   * The receiver contract at receiverAddress must implement the
+   * on_flash_loan(sender, token, amount, fee, data) callback.
    *
    * @param request - Parameters required to execute the flash loan
-   * @param options.estimateOnly - When true, returns a fee estimate instead of submitting
-   * @returns Receipt containing the transaction hash and flash loan details, or a GasEstimate
+   * @returns Receipt containing the transaction hash and flash loan details
    * @throws {FlashLoanError} If flash loans are locked or if fee config is invalid
-   * @throws {FlashLoanFailedError} If the flash loan execution fails on-chain
-   * @throws {TransactionError} If the transaction submission fails
+   * @throws {TransactionError} If the execution on-chain fails
    * @example
-   * const result = await client.flashLoans.execute({ pairAddress: 'C...', ... });
-   * const gas = await client.flashLoans.execute({ pairAddress: 'C...', ... }, { estimateOnly: true });
+   * const result = await client.flashLoans.execute({
+   *   pairAddress: 'C...', token: 'C...', amount: 1000n, receiverAddress: 'C...', callbackData: Buffer.from('')
+   * });
    */
-  async execute(request: FlashLoanRequest, options: { estimateOnly: true }): Promise<GasEstimate>;
-  async execute(request: FlashLoanRequest, options?: { estimateOnly?: false }): Promise<FlashLoanResult>;
-  async execute(request: FlashLoanRequest, options?: { estimateOnly?: boolean }): Promise<FlashLoanResult | GasEstimate> {
+  async execute(request: FlashLoanRequest): Promise<FlashLoanResult> {
     validateAddress(request.pairAddress, "pairAddress");
     validateAddress(request.token, "token");
     validatePositiveAmount(request.amount, "amount");
@@ -178,9 +108,7 @@ export class FlashLoanModule {
       );
     }
 
-    const feeFloorBps = DEFAULTS.flashFeeFloorBps;
-
-    if (!validateFeeFloor(config.flashFeeBps, feeFloorBps)) {
+    if (!validateFeeFloor(config.flashFeeBps, config.flashFeeFloor)) {
       throw new FlashLoanError("Flash loan fee below protocol floor", {
         feeBps: config.flashFeeBps,
         feeFloor: config.flashFeeFloor,
@@ -201,47 +129,37 @@ export class FlashLoanModule {
       request.callbackData,
     );
 
-    if (options?.estimateOnly) {
-      return estimateGas((ops) => this.client.simulateTransaction(ops, {}), [op]);
-    }
-
     const result = await this.client.submitTransaction([op]);
 
     if (!result.success) {
-      throw new TransactionError(
-        `Flash loan failed: ${result.error?.message ?? "Unknown error"}`,
-        result.txHash,
+      throw new FlashLoanError(
+        `Flash loan failed: ${result.error?.message ?? 'Unknown error'}`,
       );
     }
 
-    // Parse events from the transaction result
     const txHash = result.txHash!;
     const ledger = result.data!.ledger;
-    let event: FlashLoanEventData | undefined;
 
-    try {
-      // Fetch the full transaction result to decode events
-      const txResult = await this.client.server.getTransaction(txHash);
-      if (txResult.status === "SUCCESS") {
-        const events = decodeEvents(txResult as SorobanRpc.Api.GetSuccessfulTransactionResponse, {
-          contractId: request.pairAddress,
-        });
+    // Fetch the full transaction result to extract Soroban events.
+    const events = await this.fetchSorobanEvents(txHash);
 
-        // Look for FlashLoanExecuted or FlashLoanFailed events
-        const flashLoanEvent = events.find((e) => e.type === "flash_loan");
-        if (flashLoanEvent && flashLoanEvent.type === "flash_loan") {
-          event = {
-            type: "FlashLoanExecuted",
-            borrowedAmount: flashLoanEvent.amount,
-            feePaid: flashLoanEvent.fee,
-            callbackAddress: flashLoanEvent.borrower,
-          };
-        }
-      }
-    } catch {
-      // Silently ignore event parsing failures to avoid breaking the happy path
-      // The transaction succeeded, but we couldn't decode the events
+    // A FlashLoanFailed event means the callback reverted; surface it as an error.
+    const failedEvent = this.decodeFailedEvent(events);
+    if (failedEvent) {
+      throw new FlashLoanError(
+        `Flash loan callback failed: ${failedEvent.reason}`,
+        failedEvent,
+      );
     }
+
+    // Decode the success event (may be absent on older contract versions).
+    const executedEvent = this.decodeExecutedEvent(events) ?? {
+      type: 'FlashLoanExecuted' as const,
+      borrowedAmount: request.amount,
+      feePaid: feeEstimate.feeAmount,
+      callbackAddress: request.receiverAddress,
+      token: request.token,
+    };
 
     return {
       txHash,
@@ -249,7 +167,7 @@ export class FlashLoanModule {
       amount: request.amount,
       fee: feeEstimate.feeAmount,
       ledger,
-      event,
+      event: executedEvent,
     };
   }
 
@@ -314,5 +232,108 @@ export class FlashLoanModule {
     const reserve = tokens.token0 === token ? reserve0 : reserve1;
     const safetyMargin = reserve / 100n; // 1% buffer
     return reserve - safetyMargin;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: event parsing helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Retrieve Soroban contract events from a confirmed transaction's meta XDR.
+   * Returns an empty array when the RPC call fails or the meta has no events.
+   */
+  private async fetchSorobanEvents(txHash: string): Promise<xdr.ContractEvent[]> {
+    try {
+      const txResult = await this.client.server.getTransaction(txHash);
+      if (txResult.status !== 'SUCCESS') return [];
+
+      // resultMetaXdr is already a parsed xdr.TransactionMeta object.
+      const sorobanMeta = (txResult as SorobanRpc.Api.GetSuccessfulTransactionResponse)
+        .resultMetaXdr
+        .v3()
+        .sorobanMeta();
+
+      return sorobanMeta?.events() ?? [];
+    } catch {
+      // Non-fatal: callers degrade gracefully when events are unavailable.
+      return [];
+    }
+  }
+
+  /**
+   * Scan contract events for a `FlashLoanExecuted` topic and decode its data.
+   * Returns null when no matching event is found.
+   */
+  private decodeExecutedEvent(events: xdr.ContractEvent[]): FlashLoanExecutedEvent | null {
+    for (const event of events) {
+      if (event.type().name !== 'contract') continue;
+
+      const topics = event.body().v0().topics();
+      if (!topics.length) continue;
+
+      const eventName = this.topicSymbol(topics[0]);
+      if (eventName !== 'FlashLoanExecuted') continue;
+
+      try {
+        // Event data is expected to be a map keyed by symbol.
+        const data = scValToNative(event.body().v0().data()) as Record<string, unknown>;
+
+        return {
+          type: 'FlashLoanExecuted',
+          borrowedAmount: BigInt(String(data['amount'] ?? data['borrowed_amount'] ?? 0)),
+          feePaid: BigInt(String(data['fee'] ?? data['fee_paid'] ?? 0)),
+          callbackAddress: String(data['callback'] ?? data['callback_address'] ?? data['receiver'] ?? ''),
+          token: String(data['token'] ?? ''),
+        };
+      } catch {
+        // Malformed data: skip this event.
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Scan contract events for a `FlashLoanFailed` topic and decode its data.
+   * Returns null when no matching event is found.
+   */
+  private decodeFailedEvent(events: xdr.ContractEvent[]): FlashLoanFailedEvent | null {
+    for (const event of events) {
+      if (event.type().name !== 'contract') continue;
+
+      const topics = event.body().v0().topics();
+      if (!topics.length) continue;
+
+      const eventName = this.topicSymbol(topics[0]);
+      if (eventName !== 'FlashLoanFailed') continue;
+
+      try {
+        const data = scValToNative(event.body().v0().data()) as Record<string, unknown>;
+
+        return {
+          type: 'FlashLoanFailed',
+          borrowedAmount: BigInt(String(data['amount'] ?? data['borrowed_amount'] ?? 0)),
+          token: String(data['token'] ?? ''),
+          reason: String(data['reason'] ?? data['error'] ?? 'callback reverted'),
+        };
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract the string value from a Symbol ScVal topic entry.
+   * Returns an empty string for non-symbol values.
+   */
+  private topicSymbol(topic: xdr.ScVal): string {
+    try {
+      return topic.sym().toString();
+    } catch {
+      return '';
+    }
   }
 }
