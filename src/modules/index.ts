@@ -7,4 +7,5 @@ export { TokenListModule } from './tokens';
 export { FactoryModule } from './factory';
 export { RouterModule } from './router';
 export { TreasuryModule } from './treasury';
+export { StopLossModule } from './stop-loss';
 export type { TreasuryModuleOptions } from './treasury';
