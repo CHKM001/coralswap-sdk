@@ -6,10 +6,5 @@ export * from './flash-loan';
 export * from './fee';
 export * from './events';
 export * from './tokens';
-<<<<<<< ours
-export * from './positions';
-=======
-export * from './limit-orders';
 export * from './gas';
-export * from './governance';
->>>>>>> theirs
+export * from './treasury';

@@ -15,7 +15,7 @@
  * });
  *
  * const swap = client.swap();
- * const quote = await client.swap.getQuote({
+ * const quote = await swap.getQuote({
  *   tokenIn: 'CDLZ...',
  *   tokenOut: 'CBQH...',
  *   amount: 1000000n,
@@ -35,6 +35,9 @@ export {
   CoralSwapConfig,
   NetworkConfig,
   NETWORK_CONFIGS,
+  TESTNET_NETWORK,
+  MAINNET_NETWORK,
+  STAGING_NETWORK,
   DEFAULTS,
   DEFAULT_SLIPPAGE,
   PRECISION,
@@ -65,15 +68,11 @@ export {
   OracleModule,
   TokenListModule,
   RouterModule,
-<<<<<<< ours
-  PriceFeed,
-  DeviationResult,
-  getPriceDeviation,
-=======
-  LimitOrderModule,
->>>>>>> theirs
+  TreasuryModule,
 } from "@/modules";
-export type { TWAPObservation, TWAPResult, OptimalPath } from "@/modules";
+export type { OptimalPath } from "@/modules/router";
+export type { TWAPObservation, TWAPResult } from "@/modules";
+export type { TreasuryModuleOptions } from "@/modules";
 
 // Utilities
 export {
@@ -105,6 +104,7 @@ export {
   exceedsBudget,
   decodeDiagnosticEvents,
   buildSimulationResult,
+  estimateGas,
   withRetry,
   isRetryable,
   sleep,
@@ -113,7 +113,6 @@ export {
   validateNonNegativeAmount,
   validateSlippage,
   validateDistinctTokens,
-
   isValidPath,
   EventParser,
   EVENT_TOPICS,
@@ -128,13 +127,8 @@ export type {
   SimulationResourceEstimate,
   WaitNextLedgerOptions,
   DecodeEventsOptions,
+  SimulateFn,
 } from "./utils";
-
-export {
-  verifyRedStonePayload,
-  estimateUsdValue,
-  DEFAULT_PRICE_GUARD_CONFIG,
-} from "@/utils/redstone";
 
 // Errors
 export {
@@ -149,14 +143,8 @@ export {
   PairNotFoundError,
   ValidationError,
   FlashLoanError,
+  FlashLoanFailedError,
   CircuitBreakerError,
   SignerError,
-<<<<<<< ours
-  PriceDeviationError,
-  StaleOracleError,
-=======
-  OrderNotFoundError,
-  InvalidOperationError,
->>>>>>> theirs
   mapError,
 } from "@/errors";
