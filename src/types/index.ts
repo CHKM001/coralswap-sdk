@@ -8,3 +8,5 @@ export * from './events';
 export * from './tokens';
 export * from './gas';
 export * from './governance';
+export * from './dca';
+export * from './stop-loss';
