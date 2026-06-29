@@ -69,6 +69,9 @@ export {
   TokenListModule,
   RouterModule,
   TreasuryModule,
+  AlertsModule,
+  WebhooksModule,
+  MonitoringModule,
 } from "@/modules";
 export type { OptimalPath } from "@/modules/router";
 export type { TWAPObservation, TWAPResult } from "@/modules";

@@ -8,3 +8,6 @@ export { FactoryModule } from './factory';
 export { RouterModule } from './router';
 export { TreasuryModule } from './treasury';
 export type { TreasuryModuleOptions } from './treasury';
+export { AlertsModule } from './alerts';
+export { WebhooksModule } from './webhooks';
+export { MonitoringModule } from './monitoring';
