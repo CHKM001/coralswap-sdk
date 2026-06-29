@@ -8,3 +8,13 @@ export { FactoryModule } from './factory';
 export { RouterModule } from './router';
 export { TreasuryModule } from './treasury';
 export type { TreasuryModuleOptions } from './treasury';
+export { AlertModule } from './alerts';
+export { WebhookModule } from './webhooks';
+export { MonitoringModule } from './monitoring';
+export type {
+  AlertMetric,
+  AlertOperator,
+  AlertEvent,
+  CreateAlertParams,
+  UpdateAlertParams,
+} from './alerts';

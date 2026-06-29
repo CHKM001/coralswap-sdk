@@ -67,8 +67,12 @@ export {
   FeeModule,
   OracleModule,
   TokenListModule,
+  FactoryModule,
   RouterModule,
   TreasuryModule,
+  AlertModule,
+  WebhookModule,
+  MonitoringModule,
 } from "@/modules";
 export type { OptimalPath } from "@/modules/router";
 export type { TWAPObservation, TWAPResult } from "@/modules";
