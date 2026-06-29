@@ -1,190 +1,123 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import {
-  checkCompatibility,
-  parseChangelog,
-  deprecated,
-  _resetDeprecationWarnings,
-} from '../src/utils/migration';
+import { checkCompatibility } from '../src/utils/migration';
 
-beforeEach(() => {
-  _resetDeprecationWarnings();
-  jest.spyOn(console, 'warn').mockImplementation(() => {});
-});
+describe('Migration Compatibility', () => {
+  describe('checkCompatibility', () => {
+    it('returns isCompatible true with no breaking changes for a patch bump', async () => {
+      const report = await checkCompatibility('1.0.0', '1.0.1');
 
-afterEach(() => {
-  jest.restoreAllMocks();
-});
+      expect(report.isCompatible).toBe(true);
+      expect(report.breakingChanges).toHaveLength(0);
+    });
 
-// ─── checkCompatibility ────────────────────────────────────────────────────
+    it('returns isCompatible true with a note in migrationSteps for a patch bump', async () => {
+      const report = await checkCompatibility('1.0.0', '1.0.5');
 
-describe('checkCompatibility', () => {
-  it('returns compatible for a patch upgrade', () => {
-    const r = checkCompatibility('1.0.0', '1.0.1');
-    expect(r.compatible).toBe(true);
-    expect(r.breaking).toBe(false);
-  });
+      expect(report.isCompatible).toBe(true);
+      expect(report.migrationSteps).toHaveLength(1);
+      expect(report.migrationSteps[0]).toMatch(/patch bump/i);
+    });
 
-  it('returns compatible for a minor upgrade', () => {
-    const r = checkCompatibility('1.0.0', '1.1.0');
-    expect(r.compatible).toBe(true);
-    expect(r.breaking).toBe(false);
-  });
+    it('returns isCompatible true with no breaking changes for same version', async () => {
+      const report = await checkCompatibility('1.0.0', '1.0.0');
 
-  it('returns compatible for same version', () => {
-    const r = checkCompatibility('2.3.4', '2.3.4');
-    expect(r.compatible).toBe(true);
-    expect(r.breaking).toBe(false);
-  });
+      expect(report.isCompatible).toBe(true);
+      expect(report.breakingChanges).toHaveLength(0);
+      expect(report.migrationSteps).toHaveLength(0);
+    });
 
-  it('detects a major version bump as breaking', () => {
-    const r = checkCompatibility('1.2.3', '2.0.0');
-    expect(r.compatible).toBe(false);
-    expect(r.breaking).toBe(true);
-    expect(r.reason).toContain('1');
-    expect(r.reason).toContain('2');
-  });
+    it('detects breaking changes for a known minor version bump', async () => {
+      const report = await checkCompatibility('1.0.0', '1.1.0');
 
-  it('returns incompatible (non-breaking) for a downgrade', () => {
-    const r = checkCompatibility('1.2.0', '1.1.9');
-    expect(r.compatible).toBe(false);
-    expect(r.breaking).toBe(false);
-    expect(r.reason).toContain('downgrade');
-  });
+      expect(report.isCompatible).toBe(false);
+      expect(report.breakingChanges.length).toBeGreaterThan(0);
+    });
 
-  it('handles unknown / malformed version strings', () => {
-    const r = checkCompatibility('foo', '1.0.0');
-    expect(r.compatible).toBe(false);
-    expect(r.breaking).toBe(false);
-    expect(r.reason).toContain('unknown');
-  });
+    it('returns correct breaking change module for 1.0.0 to 1.1.0', async () => {
+      const report = await checkCompatibility('1.0.0', '1.1.0');
 
-  it('handles versions with leading "v" prefix', () => {
-    const r = checkCompatibility('v1.0.0', 'v1.1.0');
-    expect(r.compatible).toBe(true);
-  });
-});
+      expect(report.breakingChanges[0].module).toBe('Config');
+    });
 
-// ─── parseChangelog ────────────────────────────────────────────────────────
+    it('detects breaking changes for a known major version bump', async () => {
+      const report = await checkCompatibility('1.1.0', '2.0.0');
 
-const SAMPLE_CHANGELOG = `# Changelog
+      expect(report.isCompatible).toBe(false);
+      expect(report.breakingChanges.length).toBeGreaterThan(0);
+    });
 
-## [1.1.0] - 2026-02-17
+    it('returns all breaking changes from 1.1.0 to 2.0.0', async () => {
+      const report = await checkCompatibility('1.1.0', '2.0.0');
 
-### Added
-- New feature A
-- New feature B
+      expect(report.breakingChanges).toHaveLength(5);
+      const modules = report.breakingChanges.map((c) => c.module);
+      expect(modules).toContain('Signer');
+      expect(modules).toContain('Router');
+      expect(modules).toContain('TWAP Oracle');
+      expect(modules).toContain('FlashLoan');
+      expect(modules).toContain('Events');
+    });
 
-### Changed
-- Updated behavior X
+    it('generates actionable migration steps for a major bump', async () => {
+      const report = await checkCompatibility('1.1.0', '2.0.0');
 
-### Backward Compatible
-- Old API still works
+      expect(report.migrationSteps.length).toBeGreaterThan(5);
+      expect(report.migrationSteps[0]).toMatch(/upgrade/i);
+      expect(report.migrationSteps.some((s) => s.includes('---'))).toBe(true);
+      expect(report.migrationSteps.some((s) => s.includes('Old:'))).toBe(true);
+      expect(report.migrationSteps.some((s) => s.includes('New:'))).toBe(true);
+    });
 
-## [1.0.0] - 2026-01-01
+    it('handles unknown current version gracefully', async () => {
+      const report = await checkCompatibility('2.0.0', '2.1.0');
 
-### Added
-- Initial release
-`;
+      expect(report.isCompatible).toBe(true);
+      expect(report.breakingChanges).toHaveLength(0);
+      expect(report.migrationSteps[0]).toMatch(/no known breaking changes/i);
+    });
 
-describe('parseChangelog', () => {
-  it('parses version numbers correctly', () => {
-    const entries = parseChangelog(SAMPLE_CHANGELOG);
-    expect(entries.map((e) => e.version)).toEqual(['1.1.0', '1.0.0']);
-  });
+    it('handles unknown target version gracefully', async () => {
+      const report = await checkCompatibility('1.1.0', '1.2.0');
 
-  it('parses release dates', () => {
-    const entries = parseChangelog(SAMPLE_CHANGELOG);
-    expect(entries[0].date).toBe('2026-02-17');
-    expect(entries[1].date).toBe('2026-01-01');
-  });
+      expect(report.isCompatible).toBe(true);
+      expect(report.breakingChanges).toHaveLength(0);
+      expect(report.migrationSteps[0]).toMatch(/no known breaking changes/i);
+    });
 
-  it('parses all section types (Added, Changed, Backward Compatible)', () => {
-    const entries = parseChangelog(SAMPLE_CHANGELOG);
-    const sections = Object.keys(entries[0].sections);
-    expect(sections).toContain('Added');
-    expect(sections).toContain('Changed');
-    expect(sections).toContain('Backward Compatible');
-  });
+    it('handles unknown major version transition gracefully', async () => {
+      const report = await checkCompatibility('2.0.0', '3.0.0');
 
-  it('captures items within each section', () => {
-    const entries = parseChangelog(SAMPLE_CHANGELOG);
-    expect(entries[0].sections['Added']).toEqual(['New feature A', 'New feature B']);
-    expect(entries[0].sections['Changed']).toEqual(['Updated behavior X']);
-  });
+      expect(report.isCompatible).toBe(true);
+      expect(report.breakingChanges).toHaveLength(0);
+      expect(report.migrationSteps[0]).toMatch(/no known breaking changes/i);
+    });
 
-  it('handles empty / malformed input without throwing', () => {
-    expect(() => parseChangelog('')).not.toThrow();
-    expect(parseChangelog('')).toEqual([]);
-  });
+    it('aggregates breaking changes across multiple minor bumps', async () => {
+      const report = await checkCompatibility('1.0.0', '2.0.0');
 
-  it('returns empty array for content with no version headers', () => {
-    expect(parseChangelog('Some random text\n- bullet')).toEqual([]);
-  });
+      expect(report.isCompatible).toBe(false);
+      // 1.0.0->1.1.0 (1 change) + 1.1.0->2.0.0 (5 changes)
+      expect(report.breakingChanges).toHaveLength(6);
+    });
 
-  it('parses the real CHANGELOG.md without throwing', () => {
-    const changelogPath = path.resolve(__dirname, '../CHANGELOG.md');
-    const content = fs.readFileSync(changelogPath, 'utf-8');
-    expect(() => parseChangelog(content)).not.toThrow();
-    const entries = parseChangelog(content);
-    expect(entries.length).toBeGreaterThan(0);
-    expect(entries[0].sections).toHaveProperty('Added');
-  });
-});
+    it('reports downgrade as incompatible with warning steps', async () => {
+      const report = await checkCompatibility('2.0.0', '1.0.0');
 
-// ─── deprecated ───────────────────────────────────────────────────────────
+      expect(report.isCompatible).toBe(false);
+      expect(report.breakingChanges).toHaveLength(0);
+      expect(report.migrationSteps[0]).toMatch(/downgrade/i);
+    });
 
-describe('deprecated', () => {
-  it('emits a console.warn on first call', () => {
-    deprecated('oldApi');
-    expect(console.warn).toHaveBeenCalledTimes(1);
-  });
+    it('throws ValidationError for invalid semver in currentVersion', async () => {
+      await expect(checkCompatibility('not-a-version', '1.0.0')).rejects.toThrow();
+    });
 
-  it('returns true when warning is emitted', () => {
-    expect(deprecated('firstCall')).toBe(true);
-  });
+    it('throws ValidationError for invalid semver in targetVersion', async () => {
+      await expect(checkCompatibility('1.0.0', 'latest')).rejects.toThrow();
+    });
 
-  it('suppresses duplicate warnings (deduplication)', () => {
-    deprecated('dup');
-    deprecated('dup');
-    deprecated('dup');
-    expect(console.warn).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns false on subsequent calls for the same name', () => {
-    deprecated('repeated');
-    expect(deprecated('repeated')).toBe(false);
-  });
-
-  it('includes replacement in the warning message', () => {
-    deprecated('oldFn', { replacement: 'newFn' });
-    const msg = (console.warn as jest.Mock).mock.calls[0][0] as string;
-    expect(msg).toContain('newFn');
-  });
-
-  it('includes a stack trace when stackTrace option is true', () => {
-    deprecated('tracedFn', { stackTrace: true });
-    const msg = (console.warn as jest.Mock).mock.calls[0][0] as string;
-    // stack traces include "at " lines
-    expect(msg).toMatch(/at /);
-  });
-
-  it('treats different names as independent', () => {
-    deprecated('apiA');
-    deprecated('apiB');
-    expect(console.warn).toHaveBeenCalledTimes(2);
-  });
-
-  it('respects custom deduplication key', () => {
-    deprecated('nameA', { key: 'shared-key' });
-    deprecated('nameB', { key: 'shared-key' });
-    expect(console.warn).toHaveBeenCalledTimes(1);
-  });
-
-  it('_resetDeprecationWarnings clears suppression state', () => {
-    deprecated('resetTest');
-    _resetDeprecationWarnings();
-    deprecated('resetTest');
-    expect(console.warn).toHaveBeenCalledTimes(2);
+    it('throws ValidationError for incomplete semver strings', async () => {
+      await expect(checkCompatibility('1.0', '2.0.0')).rejects.toThrow();
+      await expect(checkCompatibility('1.0.0', '2.0')).rejects.toThrow();
+    });
   });
 });
