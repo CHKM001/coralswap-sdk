@@ -9,3 +9,6 @@ export { RouterModule } from './router';
 export { TreasuryModule } from './treasury';
 export { StopLossModule } from './stop-loss';
 export type { TreasuryModuleOptions } from './treasury';
+export { AlertModule } from './alerts';
+export { LeaderboardModule } from './leaderboard';
+export type { TraderRanking, GetTopTradersOptions } from './leaderboard';
