@@ -163,3 +163,156 @@ export const WEBHOOK_DEFAULTS = {
   backoffMultiplier: 2,
   timeoutMs: 10_000,
 } as const;
+
+/**
+ * Number of consecutive delivery failures (network error after all
+ * retries, or repeated 5xx responses) that triggers the SDK to
+ * auto-disable a webhook and refuse further {@link WebhookModule.sendWebhook}
+ * calls until the caller explicitly resumes it via
+ * {@link WebhookModule.enableWebhook}.
+ */
+export const WEBHOOK_DISABLE_FAILURE_THRESHOLD = 5;
+
+/**
+ * Maximum number of delivery-history entries retained in memory per
+ * registered webhook. The history is a ring buffer — once the cap is
+ * reached, the oldest entry is evicted to make room for the newest.
+ * Set high enough to be useful for paging; small enough to bound
+ * memory usage for applications registering many webhooks.
+ */
+export const WEBHOOK_HISTORY_CAPACITY = 500;
+
+/**
+ * Type discriminator included in the body of {@link WebhookModule.verifyWebhook}
+ * handshakes. Receivers can use this to distinguish a verification
+ * request from a regular event delivery.
+ */
+export const WEBHOOK_VERIFY_PAYLOAD_TYPE = 'webhook.verify' as const;
+
+/**
+ * Result returned by {@link WebhookModule.verifyWebhook}.
+ *
+ * The verify handshake is a single POST to the registered URL with a
+ * challenge payload. Endpoints that are healthy must respond with a
+ * 2xx status; anything else is treated as a failed handshake. The
+ * caller is expected to inspect `verified` rather than catching
+ * exceptions — failures surface through this result object so the
+ * surrounding code does not have to wrap the call in try/catch.
+ */
+export interface WebhookVerifyResult {
+  /**
+   * `true` when the endpoint returned a 2xx status during the handshake.
+   */
+  verified: boolean;
+  /**
+   * HTTP status code returned by the endpoint, or `0` if the request
+   * failed before a response was received.
+   */
+  statusCode: number;
+  /**
+   * Wall-clock latency of the handshake request, in milliseconds.
+   * Useful for call-site observability (logging, metrics).
+   */
+  latencyMs: number;
+  /**
+   * The challenge string embedded in the request body. Exposed so
+   * receivers that echo the challenge back can be verified by the
+   * caller without re-sending the request.
+   */
+  challenge: string;
+  /**
+   * Optional human-readable error message when `verified` is `false`.
+   */
+  error?: string;
+}
+
+/**
+ * Tunable behavior for a {@link WebhookModule.verifyWebhook} handshake.
+ */
+export interface WebhookVerifyOptions {
+  /**
+   * Per-attempt timeout in milliseconds. Defaults to the module's
+   * global `WEBHOOK_DEFAULTS.timeoutMs`.
+   */
+  timeoutMs?: number;
+  /**
+   * Custom `fetch` override (same semantics as
+   * {@link WebhookOptions.fetchImpl}).
+   */
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * A single recorded delivery attempt — one entry is appended every
+ * time {@link WebhookModule.sendWebhook} finishes (success or
+ * terminal failure), regardless of how many retries ran inside the
+ * call. The history array per webhook is bounded by
+ * {@link WEBHOOK_HISTORY_CAPACITY}.
+ */
+export interface WebhookHistoryEntry {
+  /** Identifier copied from the envelope (`X-Webhook-Delivery`). */
+  deliveryId: string;
+  /** Unix epoch milliseconds when the delivery attempt finished. */
+  timestamp: number;
+  /** Final HTTP status code observed, or `0` for network errors. */
+  statusCode: number;
+  /** `true` when the endpoint returned a 2xx response. */
+  delivered: boolean;
+  /** Total number of attempts made for this delivery (>= 1). */
+  attempts: number;
+  /**
+   * Number of retries performed after the initial attempt — same
+   * semantics as {@link WebhookDeliveryResult.retryCount}.
+   */
+  retryCount: number;
+  /**
+   * Failure category. `"network"` covers timeouts and socket errors,
+   * `"client"` covers 4xx responses, `"server"` covers 5xx, and
+   * `"success"` records a delivered payload.
+   */
+  outcome: 'success' | 'network' | 'client' | 'server';
+  /** Optional short error message captured when the attempt failed. */
+  errorMessage?: string;
+}
+
+/**
+ * Query parameters for {@link WebhookModule.getWebhookHistory}.
+ *
+ * Pagination is cursor-based: callers pass the `nextCursor` value
+ * returned by the previous page to walk the history. For convenience,
+ * `limit` may also be combined with a numeric `offset` to support
+ * the classic index/limit style.
+ */
+export interface WebhookHistoryQuery {
+  /** Maximum number of entries per page (1..200). Defaults to 50. */
+  limit?: number;
+  /**
+   * Opaque cursor returned by the previous page. When present,
+   * returned entries start immediately after the cursor.
+   */
+  cursor?: string;
+  /**
+   * Zero-based offset relative to the start of the history, used when
+   * no `cursor` is provided.
+   */
+  offset?: number;
+}
+
+/**
+ * A single page of delivery history.
+ *
+ * `nextCursor` is non-null when more entries remain after this page.
+ * The caller should pass it as `cursor` on the next call to continue
+ * iterating.
+ */
+export interface WebhookHistoryPage {
+  /** Entries in the requested page, newest first. */
+  items: WebhookHistoryEntry[];
+  /**
+   * Cursor for the next page, or `null` when this is the last page.
+   * Opaque to callers — pass it back unchanged.
+   */
+  nextCursor: string | null;
+  /** Total entries stored for this webhook (across all pages). */
+  total: number;
+}

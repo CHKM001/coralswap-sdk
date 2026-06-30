@@ -158,5 +158,6 @@ export {
   CircuitBreakerError,
   SignerError,
   WebhookError,
+  WebhookDisabledError,
   mapError,
 } from "@/errors";
