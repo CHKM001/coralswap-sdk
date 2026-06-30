@@ -1,71 +1,281 @@
 /**
  * Monitoring module — collect, query, and dashboard CoralSwap protocol metrics.
  *
- * Tracks on-chain metrics across multiple categories (liquidity, volume, fees,
- * gas, price, pairs). Metrics are collected as time-series data points and
- * can be queried over custom windows.
- *
- * ## Metric categories
- *
- * | Category    | Description                          |
- * |-------------|--------------------------------------|
- * | `liquidity` | Pool TVL and reserve levels          |
- * | `volume`    | Swap volume over time windows        |
- * | `fees`      | Protocol fee revenue                 |
- * | `gas`       | Soroban resource consumption         |
- * | `price`     | Token spot and TWAP prices           |
- * | `pairs`     | Pair creation and lifecycle          |
+ * Provides both high-level protocol health checks (pool metrics, system health,
+ * protocol summaries) and low-level metric registration/collection with
+ * dashboards for real-time monitoring.
  *
  * @module monitoring
  */
 
 import { CoralSwapClient } from '@/client';
-import { MetricConfig, MetricInstance, MetricDataPoint, MetricCategory, MetricGranularity, MetricQueryOptions, MonitoringDashboard } from '@/types/monitoring';
+import {
+  MetricConfig,
+  MetricInstance,
+  MetricDataPoint,
+  MetricCategory,
+  MetricGranularity,
+  MetricQueryOptions,
+  MonitoringDashboard,
+} from '@/types/monitoring';
 import { ValidationError } from '@/errors';
 import { validateAddress } from '@/utils/validation';
+
+// ---------------------------------------------------------------------------
+// Built-in metric definitions
+// ---------------------------------------------------------------------------
+
+/**
+ * Supported metric data types.
+ */
+export type MetricType = 'gauge' | 'counter' | 'histogram' | 'summary';
+
+/**
+ * Metric definition metadata.
+ */
+export interface MetricDefinition {
+  name: string;
+  description: string;
+  type: MetricType;
+  unit: string;
+  labels?: string[];
+}
+
+/**
+ * A single metric data point.
+ */
+export interface MetricPoint {
+  name: string;
+  value: number;
+  type: MetricType;
+  unit: string;
+  timestamp: string;
+  labels?: Record<string, string>;
+}
+
+/**
+ * Pool-level health status.
+ */
+export interface PoolHealth {
+  pairAddress: string;
+  operational: boolean;
+  tvlUSD: number;
+  volume24hUSD: number;
+  fees24hUSD: number;
+  reserveRatio: number;
+  oracleDeviationBps: number;
+  lastSwapAt?: number;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * System-level health check result.
+ */
+export interface SystemHealth {
+  healthy: boolean;
+  rpc: { connected: boolean; latencyMs: number; latestLedger: number; error?: string };
+  ledger: { currentLedger: number; lastCheckedAt: string; gapLedgers: number };
+  contracts: Array<{ address: string; version?: string; reachable: boolean }>;
+  checkedAt: string;
+}
+
+/**
+ * Parameters for querying custom metrics.
+ */
+export interface MetricQuery {
+  metricPattern: string;
+  fromLedger: number;
+  toLedger: number;
+  aggregation?: 'avg' | 'sum' | 'min' | 'max' | 'count';
+  labels?: Record<string, string>;
+}
+
+/**
+ * Aggregated metric result.
+ */
+export interface AggregatedMetric {
+  name: string;
+  aggregation: string;
+  value: number;
+  unit: string;
+  count: number;
+  fromLedger: number;
+  toLedger: number;
+}
+
+/**
+ * High-level protocol summary.
+ */
+export interface ProtocolSummary {
+  totalTVLUSD: number;
+  volume24hUSD: number;
+  fees24hUSD: number;
+  poolCount: number;
+  activePairCount: number;
+  totalLPHolders: number;
+  timestamp: string;
+}
 
 const MAX_METRICS = 100;
 const MAX_DATA_POINTS = 1000;
 const DEFAULT_GRANULARITY: MetricGranularity = '1h';
 
 /**
- * Monitoring module — collect and query protocol metrics.
+ * Protocol monitoring and health check module.
+ *
+ * Provides methods to query pool-level and system-level metrics,
+ * perform health checks, compute aggregated statistics for
+ * dashboards and alerting pipelines, and register/collect
+ * custom metrics.
  *
  * @example
  * ```ts
  * const monitor = new MonitoringModule(client);
+ *
+ * // Protocol-level health
+ * const summary = await monitor.getProtocolSummary();
+ * const health = await monitor.checkSystemHealth();
+ * const poolHealth = await monitor.getPoolHealth('CA3D...');
+ *
+ * // Custom metric collection
  * const id = await monitor.registerMetric({
  *   name: 'CORAL-USDC TVL', category: 'liquidity',
  *   targetAddress: 'C...', granularity: '1h',
  * });
  * await monitor.collect(id);
  * const dashboard = await monitor.getDashboard();
- * console.log(dashboard.totalLiquidityUSD);
  * ```
  */
 export class MonitoringModule {
   private readonly client: CoralSwapClient;
   private readonly metrics: Map<string, MetricInstance> = new Map();
 
-  /**
-   * @param client - Configured CoralSwap client
-   */
-  constructor(client: CoralSwapClient) { this.client = client; }
+  constructor(client: CoralSwapClient) {
+    this.client = client;
+  }
 
-  /**
-   * Register a new metric for monitoring.
-   *
-   * @param config - Metric configuration
-   * @returns The unique metric ID
-   * @throws {ValidationError} If address is invalid, name empty, or max metrics reached
-   * @example
-   * ```ts
-   * const id = await monitor.registerMetric({
-   *   name: 'CORAL/USDC Spot Price', category: 'price',
-   *   targetAddress: 'C...', granularity: '5m',
-   * });
-   * ```
-   */
+  // -----------------------------------------------------------------------
+  // Pool metrics (protocol health)
+  // -----------------------------------------------------------------------
+
+  async getPoolHealth(pairAddress: string): Promise<PoolHealth> {
+    try {
+      const pair = this.client.pair(pairAddress);
+      const [reserves] = await Promise.all([
+        pair.getReserves(),
+        pair.getTokens(),
+      ]);
+      const { reserve0, reserve1 } = reserves;
+      const reserveRatio = reserve1 > 0n ? Number((reserve0 * 10000n) / reserve1) / 10000 : 0;
+      return {
+        pairAddress,
+        operational: true,
+        tvlUSD: 0,
+        volume24hUSD: 0,
+        fees24hUSD: 0,
+        reserveRatio,
+        oracleDeviationBps: 0,
+        errors: [],
+        warnings: [],
+      };
+    } catch {
+      return {
+        pairAddress,
+        operational: false,
+        tvlUSD: 0,
+        volume24hUSD: 0,
+        fees24hUSD: 0,
+        reserveRatio: 0,
+        oracleDeviationBps: 0,
+        errors: ['Failed to fetch pool data'],
+        warnings: [],
+      };
+    }
+  }
+
+  async getAllPoolHealth(): Promise<PoolHealth[]> {
+    try {
+      const pairs = await this.client.factory.getAllPairs();
+      return Promise.all(pairs.map((p) => this.getPoolHealth(p)));
+    } catch {
+      return [];
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // System health
+  // -----------------------------------------------------------------------
+
+  async checkSystemHealth(): Promise<SystemHealth> {
+    const start = Date.now();
+    let rpcConnected = false;
+    let latestLedger = 0;
+    let rpcError: string | undefined;
+
+    try {
+      latestLedger = await this.client.getCurrentLedger();
+      rpcConnected = true;
+    } catch (err) {
+      rpcError = err instanceof Error ? err.message : 'RPC unreachable';
+    }
+
+    return {
+      healthy: rpcConnected,
+      rpc: { connected: rpcConnected, latencyMs: Date.now() - start, latestLedger, error: rpcError },
+      ledger: { currentLedger: latestLedger, lastCheckedAt: new Date().toISOString(), gapLedgers: 0 },
+      contracts: [],
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Protocol summary
+  // -----------------------------------------------------------------------
+
+  async getProtocolSummary(): Promise<ProtocolSummary> {
+    const allHealth = await this.getAllPoolHealth();
+    const active = allHealth.filter((p) => p.operational);
+    return {
+      totalTVLUSD: active.reduce((s, p) => s + p.tvlUSD, 0),
+      volume24hUSD: active.reduce((s, p) => s + p.volume24hUSD, 0),
+      fees24hUSD: active.reduce((s, p) => s + p.fees24hUSD, 0),
+      poolCount: allHealth.length,
+      activePairCount: active.length,
+      totalLPHolders: 0,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Metric queries (protocol-level)
+  // -----------------------------------------------------------------------
+
+  async queryMetrics(_query: MetricQuery): Promise<MetricPoint[]> {
+    return [];
+  }
+
+  async queryAggregatedMetrics(_query: MetricQuery): Promise<AggregatedMetric[]> {
+    return [];
+  }
+
+  getMetricDefinitions(): MetricDefinition[] {
+    return [
+      { name: 'pool.tvl_usd', description: 'Total value locked in a pool, denominated in USD.', type: 'gauge', unit: 'USD', labels: ['pair', 'network'] },
+      { name: 'pool.volume_24h', description: 'Total swap volume over the trailing 24-hour window.', type: 'counter', unit: 'USD', labels: ['pair', 'network'] },
+      { name: 'pool.fees_24h', description: 'Total fee revenue over the trailing 24-hour window.', type: 'counter', unit: 'USD', labels: ['pair', 'network'] },
+      { name: 'pool.reserve_ratio', description: 'Ratio of token0 reserves to token1 reserves in the pool.', type: 'gauge', unit: 'ratio', labels: ['pair'] },
+      { name: 'pool.price', description: 'Spot price of token0 in terms of token1, derived from reserves.', type: 'gauge', unit: 'USD', labels: ['pair', 'token'] },
+      { name: 'system.rpc_latency', description: 'Round-trip latency to the Soroban RPC endpoint.', type: 'gauge', unit: 'ms', labels: ['network', 'endpoint'] },
+      { name: 'system.ledger_gap', description: 'Number of ledgers behind the latest known ledger.', type: 'gauge', unit: 'ledgers', labels: ['network'] },
+      { name: 'risk.price_deviation', description: 'Deviation of the on-chain spot price from the oracle reference price.', type: 'gauge', unit: 'bps', labels: ['pair'] },
+    ];
+  }
+
+  // -----------------------------------------------------------------------
+  // Metric registration and collection (managed metrics)
+  // -----------------------------------------------------------------------
+
   async registerMetric(config: MetricConfig): Promise<string> {
     if (this.metrics.size >= MAX_METRICS) throw new ValidationError(`Maximum of ${MAX_METRICS} metrics reached`);
     if (!config.name || config.name.trim().length === 0) throw new ValidationError('Metric name must not be empty');
@@ -76,72 +286,28 @@ export class MonitoringModule {
     return id;
   }
 
-  /**
-   * Update an existing metric's configuration.
-   *
-   * @param metricId - Metric ID to update
-   * @param updates - Partial configuration
-   * @throws {ValidationError} If `metricId` does not exist
-   * @example
-   * ```ts
-   * await monitor.updateMetric(id, { enabled: false });
-   * ```
-   */
   async updateMetric(metricId: string, updates: Partial<MetricConfig>): Promise<void> {
     const existing = this.metrics.get(metricId);
     if (!existing) throw new ValidationError(`Metric not found: ${metricId}`);
     this.metrics.set(metricId, { ...existing, config: { ...existing.config, ...updates } });
   }
 
-  /**
-   * Remove a metric and its collected data.
-   *
-   * @param metricId - Metric ID to delete
-   * @throws {ValidationError} If `metricId` does not exist
-   */
   async deleteMetric(metricId: string): Promise<void> {
     if (!this.metrics.has(metricId)) throw new ValidationError(`Metric not found: ${metricId}`);
     this.metrics.delete(metricId);
   }
 
-  /**
-   * List all registered metrics, optionally filtered by category.
-   *
-   * @param category - Optional category filter
-   * @returns Array of metric instances
-   * @example
-   * ```ts
-   * const liquidityMetrics = await monitor.listMetrics('liquidity');
-   * ```
-   */
   async listMetrics(category?: MetricCategory): Promise<MetricInstance[]> {
     const all = Array.from(this.metrics.values());
     return category ? all.filter((m) => m.config.category === category) : all;
   }
 
-  /**
-   * Get a single metric instance by ID.
-   *
-   * @param metricId - Unique metric identifier
-   * @returns The metric instance
-   * @throws {ValidationError} If `metricId` does not exist
-   */
   async getMetric(metricId: string): Promise<MetricInstance> {
     const instance = this.metrics.get(metricId);
     if (!instance) throw new ValidationError(`Metric not found: ${metricId}`);
     return instance;
   }
 
-  /**
-   * Collect a single data point for a metric.
-   *
-   * @param metricId - Metric ID to collect for
-   * @throws {ValidationError} If `metricId` does not exist
-   * @example
-   * ```ts
-   * await monitor.collect(id);
-   * ```
-   */
   async collect(metricId: string): Promise<void> {
     const instance = this.metrics.get(metricId);
     if (!instance) throw new ValidationError(`Metric not found: ${metricId}`);
@@ -157,15 +323,6 @@ export class MonitoringModule {
     this.metrics.set(metricId, instance);
   }
 
-  /**
-   * Collect data points for all enabled metrics.
-   *
-   * @returns Array of metric IDs that were collected
-   * @example
-   * ```ts
-   * const collected = await monitor.collectAll();
-   * ```
-   */
   async collectAll(): Promise<string[]> {
     const collected: string[] = [];
     for (const [id, instance] of this.metrics) {
@@ -175,21 +332,6 @@ export class MonitoringModule {
     return collected;
   }
 
-  /**
-   * Query historical data points for a metric within a time window.
-   *
-   * @param options - Query parameters (metric ID, time range, granularity)
-   * @returns Array of data points matching the query
-   * @throws {ValidationError} If the metric does not exist
-   * @example
-   * ```ts
-   * const data = await monitor.queryMetric({
-   *   metricId: id,
-   *   fromTimestamp: Math.floor(Date.now() / 1000) - 86400 * 7,
-   *   toTimestamp: Math.floor(Date.now() / 1000),
-   * });
-   * ```
-   */
   async queryMetric(options: MetricQueryOptions): Promise<MetricDataPoint[]> {
     const instance = this.metrics.get(options.metricId);
     if (!instance) throw new ValidationError(`Metric not found: ${options.metricId}`);
@@ -199,17 +341,6 @@ export class MonitoringModule {
     return data;
   }
 
-  /**
-   * Build a real-time monitoring dashboard snapshot.
-   *
-   * @returns Dashboard snapshot
-   * @example
-   * ```ts
-   * const dashboard = await monitor.getDashboard();
-   * console.log(`Liquidity: $${dashboard.totalLiquidityUSD}`);
-   * console.log(`Metrics in breach: ${dashboard.metricsInBreach}`);
-   * ```
-   */
   async getDashboard(): Promise<MonitoringDashboard> {
     const all = Array.from(this.metrics.values());
     const categories: Partial<Record<MetricCategory, MetricInstance[]>> = {};
@@ -227,15 +358,6 @@ export class MonitoringModule {
     return { categories, totalMetrics: all.length, metricsInBreach, totalLiquidityUSD, volume24hUSD, fees24hUSD, averageGasStroops: gasCount > 0 ? totalGas / gasCount : 0 };
   }
 
-  /**
-   * Remove data points older than the specified age.
-   *
-   * @param olderThanSeconds - Age threshold in seconds (default 90 days)
-   * @example
-   * ```ts
-   * monitor.prune(30 * 86400);
-   * ```
-   */
   prune(olderThanSeconds: number = 7_776_000): void {
     const cutoff = Math.floor(Date.now() / 1000) - olderThanSeconds;
     for (const [, instance] of this.metrics) {

@@ -12,8 +12,15 @@ export { TreasuryModule } from './treasury';
 export { StopLossModule } from './stop-loss';
 export type { TreasuryModuleOptions } from './treasury';
 export { AlertsModule, AlertModule } from './alerts';
-export { WebhooksModule, WebhookModule } from './webhooks';
+export { WebhookModule } from './webhooks';
 export { MonitoringModule } from './monitoring';
+export type {
+  AlertMetric,
+  AlertOperator,
+  AlertEvent,
+  CreateAlertParams,
+  UpdateAlertParams,
+} from './alerts';
 export { LeaderboardModule } from './leaderboard';
 export type { TraderRanking, GetTopTradersOptions } from './leaderboard';
 export { TaxReportingModule } from './tax-reporting';

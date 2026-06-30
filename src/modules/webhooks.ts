@@ -1,7 +1,10 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 
 import {
-  WebhookConfigLegacy, WebhookDeliveryLegacy, WebhookDeliveryStatusLegacy, WebhookEndpointHealthLegacy,
+  WebhookConfig,
+  WebhookDelivery,
+  WebhookDeliveryStatus,
+  WebhookEndpointHealth,
   StoredWebhook,
   WebhookDeliveryResult,
   WebhookEnvelope,
@@ -39,22 +42,43 @@ interface WebhookState {
   disabledAt?: number;
 }
 
-export class WebhooksModule {
-  private readonly endpoints: Map<string, WebhookConfigLegacy> = new Map();
-  private readonly deliveries: Map<string, WebhookDeliveryLegacy> = new Map();
-  private readonly healthCache: Map<string, WebhookEndpointHealthLegacy> = new Map();
+export class WebhookModule {
+  private readonly endpoints: Map<string, WebhookConfig> = new Map();
+  private readonly deliveries: Map<string, WebhookDelivery> = new Map();
+  private readonly healthCache: Map<string, WebhookEndpointHealth> = new Map();
+  private readonly webhooks: Map<string, StoredWebhook> = new Map();
+  private readonly webhookState: Map<string, WebhookState> = new Map();
+  private readonly logger?: Logger;
 
-  async registerEndpoint(config: WebhookConfigLegacy): Promise<string> {
-    if (this.endpoints.size >= MAX_ENDPOINTS) throw new ValidationError(`Maximum of ${MAX_ENDPOINTS} endpoints reached`);
-    if (!config.url.startsWith('https://')) throw new ValidationError('Webhook URL must use HTTPS', { url: config.url });
-    if (config.secret !== undefined && config.secret.trim().length === 0) throw new ValidationError('secret must not be empty');
+  constructor(deps: WebhookModuleDeps = undefined) {
+    this.logger = deps?.logger;
+  }
+
+  async registerEndpoint(config: WebhookConfig): Promise<string> {
+    if (this.endpoints.size >= MAX_ENDPOINTS) {
+      throw new ValidationError(`Maximum of ${MAX_ENDPOINTS} webhook endpoints reached`);
+    }
+    if (!config.url.startsWith('https://')) {
+      throw new ValidationError('Webhook URL must use HTTPS', { url: config.url });
+    }
+    if (config.secret !== undefined && config.secret.trim().length === 0) {
+      throw new ValidationError('webhook secret must not be empty');
+    }
+    if (config.headers) {
+      const forbidden = ['content-type', 'x-coralswap-signature'];
+      const keys = Object.keys(config.headers).map((k) => k.toLowerCase());
+      const conflicts = forbidden.filter((f) => keys.includes(f));
+      if (conflicts.length > 0) {
+        throw new ValidationError(`Cannot override reserved headers: ${conflicts.join(', ')}`);
+      }
+    }
     const id = `wh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     this.endpoints.set(id, { ...config, method: config.method ?? 'POST', payloadFormat: config.payloadFormat ?? 'json', enabled: config.enabled ?? true });
     this.healthCache.set(id, { webhookId: id, url: config.url, enabled: true, totalDeliveries: 0, successfulDeliveries: 0, failedDeliveries: 0, successRate: 1, averageResponseTimeMs: 0 });
     return id;
   }
 
-  async updateEndpoint(webhookId: string, updates: Partial<WebhookConfigLegacy>): Promise<void> {
+  async updateEndpoint(webhookId: string, updates: Partial<WebhookConfig>): Promise<void> {
     const existing = this.endpoints.get(webhookId);
     if (!existing) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
     this.endpoints.set(webhookId, { ...existing, ...updates });
@@ -67,28 +91,29 @@ export class WebhooksModule {
     for (const [dId, d] of this.deliveries) { if (d.webhookId === webhookId) this.deliveries.delete(dId); }
   }
 
-  async listEndpoints(): Promise<WebhookConfigLegacy[]> { return Array.from(this.endpoints.values()); }
+  async listEndpoints(): Promise<WebhookConfig[]> { return Array.from(this.endpoints.values()); }
 
-  async getEndpoint(webhookId: string): Promise<WebhookConfigLegacy> {
+  async getEndpoint(webhookId: string): Promise<WebhookConfig> {
     const ep = this.endpoints.get(webhookId);
     if (!ep) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
     return ep;
   }
 
-  async deliver(webhookId: string, payload: Record<string, unknown>): Promise<WebhookDeliveryLegacy> {
+  async deliver(webhookId: string, payload: Record<string, unknown>): Promise<WebhookDelivery> {
     const endpoint = this.endpoints.get(webhookId);
     if (!endpoint) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
     if (!endpoint.enabled) throw new ValidationError('Webhook endpoint is disabled');
     const body = JSON.stringify(payload);
     if (Buffer.byteLength(body, 'utf-8') > MAX_PAYLOAD_BYTES) throw new ValidationError(`Payload exceeds ${MAX_PAYLOAD_BYTES} byte limit`);
     const deliveryId = `del_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const delivery: WebhookDeliveryLegacy = { id: deliveryId, webhookId, alertId: (payload['alertId'] as string) ?? 'unknown', status: 'pending', sentAt: Math.floor(Date.now() / 1000), retryCount: 0 };
+    const delivery: WebhookDelivery = { id: deliveryId, webhookId, alertId: (payload['alertId'] as string) ?? 'unknown', status: 'pending', sentAt: Math.floor(Date.now() / 1000), retryCount: 0 };
     this.deliveries.set(deliveryId, delivery);
-    void this.sendHttpRequest(endpoint, body, delivery);
+    this.recordDeliveryAttempt(webhookId, delivery);
+    await this.sendHttpRequest(endpoint, body, delivery);
     return this.deliveries.get(deliveryId)!;
   }
 
-  async retryDelivery(deliveryId: string): Promise<WebhookDeliveryLegacy> {
+  async retryDelivery(deliveryId: string): Promise<WebhookDelivery> {
     const delivery = this.deliveries.get(deliveryId);
     if (!delivery) throw new ValidationError(`Delivery not found: ${deliveryId}`);
     if (delivery.status === 'success' || delivery.status === 'exhausted') throw new ValidationError(`Cannot retry delivery in status ${delivery.status}`);
@@ -99,75 +124,23 @@ export class WebhooksModule {
     return this.deliveries.get(deliveryId)!;
   }
 
-  async getDelivery(deliveryId: string): Promise<WebhookDeliveryLegacy> {
+  async getDelivery(deliveryId: string): Promise<WebhookDelivery> {
     const delivery = this.deliveries.get(deliveryId);
     if (!delivery) throw new ValidationError(`Delivery not found: ${deliveryId}`);
     return delivery;
   }
 
-  async listDeliveries(webhookId: string, limit: number = 50): Promise<WebhookDeliveryLegacy[]> {
-    const all = Array.from(this.deliveries.values()).filter((d) => d.webhookId === webhookId);
-    all.sort((a, b) => b.sentAt - a.sentAt);
-    return all.slice(0, limit);
+  async listDeliveries(webhookId: string, limit: number = 50): Promise<WebhookDelivery[]> {
+    const result: WebhookDelivery[] = [];
+    for (const delivery of this.deliveries.values()) { if (delivery.webhookId === webhookId) result.push(delivery); }
+    result.sort((a, b) => b.sentAt - a.sentAt);
+    return result.slice(0, limit);
   }
 
-  async getEndpointHealth(webhookId: string): Promise<WebhookEndpointHealthLegacy> {
+  async getEndpointHealth(webhookId: string): Promise<WebhookEndpointHealth> {
     const health = this.healthCache.get(webhookId);
     if (!health) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
     return health;
-  }
-
-  private async sendHttpRequest(endpoint: WebhookConfigLegacy, body: string, delivery: WebhookDeliveryLegacy): Promise<void> {
-    this.updateDeliveryStatus(delivery.id, 'delivering');
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json', 'User-Agent': 'CoralSwap-Webhook/1.0', ...endpoint.headers };
-      if (endpoint.secret) headers['X-CoralSwap-Signature'] = createHmac('sha256', endpoint.secret).update(body).digest('hex');
-      const response = await fetch(endpoint.url, { method: endpoint.method ?? 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
-      const isSuccess = response.status >= 200 && response.status < 300;
-      this.updateDeliveryStatus(delivery.id, isSuccess ? 'success' : 'failed', { httpStatus: response.status, completedAt: Math.floor(Date.now() / 1000) });
-      this.recordDeliveryAttempt(delivery.webhookId, { ...delivery, status: isSuccess ? 'success' : 'failed' });
-      if (!isSuccess && delivery.retryCount < 3) { await this.scheduleRetry(delivery.id, delivery.retryCount + 1); }
-      else if (!isSuccess) { this.updateDeliveryStatus(delivery.id, 'exhausted'); }
-    } catch (err) {
-      this.updateDeliveryStatus(delivery.id, 'failed', { errorMessage: err instanceof Error ? err.message : 'Unknown error', completedAt: Math.floor(Date.now() / 1000) });
-      this.recordDeliveryAttempt(delivery.webhookId, { ...delivery, status: 'failed' });
-      if (delivery.retryCount < 3) { await this.scheduleRetry(delivery.id, delivery.retryCount + 1); }
-      else { this.updateDeliveryStatus(delivery.id, 'exhausted'); }
-    }
-  }
-
-  private async scheduleRetry(_deliveryId: string, _attempt: number): Promise<void> { await new Promise((r) => setTimeout(r, 0)); }
-
-  private updateDeliveryStatus(deliveryId: string, status: WebhookDeliveryStatusLegacy, extra?: Partial<WebhookDeliveryLegacy>): void {
-    const existing = this.deliveries.get(deliveryId);
-    if (!existing) return;
-    this.deliveries.set(deliveryId, { ...existing, ...extra, status, retryCount: status === 'failed' || status === 'exhausted' ? existing.retryCount + 1 : existing.retryCount });
-  }
-
-  private recordDeliveryAttempt(webhookId: string, _delivery: WebhookDeliveryLegacy): void {
-    const health = this.healthCache.get(webhookId);
-    if (!health) return;
-    const allDeliveries = Array.from(this.deliveries.values()).filter((d) => d.webhookId === webhookId);
-    const successful = allDeliveries.filter((d) => d.status === 'success').length;
-    const total = allDeliveries.length;
-    health.totalDeliveries = total;
-    health.successfulDeliveries = successful;
-    health.failedDeliveries = total - successful;
-    health.successRate = total > 0 ? successful / total : 1;
-    health.lastDeliveryAt = Math.floor(Date.now() / 1000);
-    this.healthCache.set(webhookId, health);
-  }
-
-  private loadPayload(_deliveryId: string): Record<string, unknown> { return {}; }
-}
-
-export class WebhookModule {
-  private readonly webhooks: Map<string, StoredWebhook> = new Map();
-  private readonly webhookState: Map<string, WebhookState> = new Map();
-  private readonly logger?: Logger;
-
-  constructor(deps: WebhookModuleDeps = undefined) {
-    this.logger = deps?.logger;
   }
 
   async registerWebhook(
@@ -522,6 +495,123 @@ export class WebhookModule {
     this.webhooks.clear();
     this.webhookState.clear();
     this.logger?.info('webhooks.clear: cleared all webhooks');
+  }
+
+  private async sendHttpRequest(
+    endpoint: WebhookConfig,
+    body: string,
+    delivery: WebhookDelivery,
+  ): Promise<void> {
+    this.updateDeliveryStatus(delivery.id, 'delivering');
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'User-Agent': 'CoralSwap-Webhook/1.0',
+        ...endpoint.headers,
+      };
+
+      if (endpoint.secret) {
+        const signature = createHmac('sha256', endpoint.secret)
+          .update(body)
+          .digest('hex');
+        headers['X-CoralSwap-Signature'] = signature;
+      }
+
+      const response = await fetch(endpoint.url, {
+        method: endpoint.method ?? 'POST',
+        headers,
+        body,
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      const isSuccess = response.status >= 200 && response.status < 300;
+
+      this.updateDeliveryStatus(delivery.id, isSuccess ? 'success' : 'failed', {
+        httpStatus: response.status,
+        completedAt: Math.floor(Date.now() / 1000),
+      });
+
+      this.recordDeliveryAttempt(delivery.webhookId, {
+        ...delivery,
+        status: isSuccess ? 'success' : 'failed',
+      });
+
+      if (!isSuccess && delivery.retryCount < 3) {
+        await this.scheduleRetry(delivery.id, delivery.retryCount + 1);
+      } else if (!isSuccess) {
+        this.updateDeliveryStatus(delivery.id, 'exhausted');
+      }
+    } catch (err) {
+      this.updateDeliveryStatus(delivery.id, 'failed', {
+        errorMessage: err instanceof Error ? err.message : 'Unknown error',
+        completedAt: Math.floor(Date.now() / 1000),
+      });
+
+      this.recordDeliveryAttempt(delivery.webhookId, {
+        ...delivery,
+        status: 'failed',
+      });
+
+      if (delivery.retryCount < 3) {
+        await this.scheduleRetry(delivery.id, delivery.retryCount + 1);
+      } else {
+        this.updateDeliveryStatus(delivery.id, 'exhausted');
+      }
+    }
+  }
+
+  private async scheduleRetry(
+    _deliveryId: string,
+    _attempt: number,
+  ): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  private updateDeliveryStatus(
+    deliveryId: string,
+    status: WebhookDeliveryStatus,
+    extra?: Partial<WebhookDelivery>,
+  ): void {
+    const existing = this.deliveries.get(deliveryId);
+    if (!existing) return;
+    this.deliveries.set(deliveryId, {
+      ...existing,
+      ...extra,
+      status,
+      retryCount:
+        status === 'failed' || status === 'exhausted'
+          ? existing.retryCount + 1
+          : existing.retryCount,
+    });
+  }
+
+  private recordDeliveryAttempt(
+    webhookId: string,
+    _delivery: WebhookDelivery,
+  ): void {
+    const health = this.healthCache.get(webhookId);
+    if (!health) return;
+
+    const allDeliveries = Array.from(this.deliveries.values()).filter(
+      (d) => d.webhookId === webhookId,
+    );
+    const successful = allDeliveries.filter(
+      (d) => d.status === 'success',
+    ).length;
+    const total = allDeliveries.length;
+
+    health.totalDeliveries = total;
+    health.successfulDeliveries = successful;
+    health.failedDeliveries = total - successful;
+    health.successRate = total > 0 ? successful / total : 1;
+    health.lastDeliveryAt = Math.floor(Date.now() / 1000);
+
+    this.healthCache.set(webhookId, health);
+  }
+
+  private loadPayload(_deliveryId: string): Record<string, unknown> {
+    return {};
   }
 
   private requireState(webhookId: string): WebhookState {
