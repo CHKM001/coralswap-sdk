@@ -138,6 +138,20 @@ export class InsufficientLiquidityError extends CoralSwapSDKError {
 }
 
 /**
+ * Threshold value is invalid.
+ */
+export class InvalidThresholdError extends CoralSwapSDKError {
+  constructor(alertType: string, value: number, min: number, max: number) {
+    super(
+      "INVALID_THRESHOLD",
+      `${alertType} threshold ${value} is out of range (${min}-${max})`,
+      { alertType, value, min, max },
+    );
+    this.name = "InvalidThresholdError";
+  }
+}
+
+/**
  * Pool not found for a token pair.
  */
 export class PairNotFoundError extends CoralSwapSDKError {
@@ -147,6 +161,20 @@ export class PairNotFoundError extends CoralSwapSDKError {
       tokenB,
     });
     this.name = "PairNotFoundError";
+  }
+}
+
+/**
+ * Webhook delivery failure.
+ */
+export class WebhookDeliveryError extends CoralSwapSDKError {
+  constructor(webhookId: string, statusCode: number, retryCount: number) {
+    super(
+      "WEBHOOK_DELIVERY_FAILED",
+      `Webhook ${webhookId} failed with status ${statusCode} after ${retryCount} retries`,
+      { webhookId, statusCode, retryCount },
+    );
+    this.name = "WebhookDeliveryError";
   }
 }
 
@@ -232,11 +260,11 @@ export class PriceDeviationError extends CoralSwapSDKError {
  * RedStone oracle payload is stale (older than the allowed staleness window).
  */
 export class StaleOracleError extends CoralSwapSDKError {
-  constructor(payloadTimestamp: number, maxAgeMs: number) {
+  constructor(asset: string, lastUpdate: number, maxAge: number) {
     super(
       "STALE_ORACLE_PAYLOAD",
-      `RedStone payload is stale (timestamp: ${payloadTimestamp}, max age: ${maxAgeMs}ms)`,
-      { payloadTimestamp, maxAgeMs },
+      `RedStone payload for ${asset} is stale (last update: ${lastUpdate}, max age: ${maxAge}ms)`,
+      { asset, lastUpdate, maxAge },
     );
     this.name = "StaleOracleError";
   }

@@ -12,7 +12,7 @@ import {
   HealthAlert,
   VolumeAlert,
 } from '@/types/alerts';
-import { ValidationError, InsufficientLiquidityError } from '@/errors';
+import { ValidationError, InsufficientLiquidityError, InvalidThresholdError } from '@/errors';
 import {
   validateAddress,
   validateDistinctTokens,
@@ -313,15 +313,11 @@ export class AlertModule {
       this.validateBps(config.threshold, 'threshold');
     } else if (config.type === 'price') {
       if (config.threshold <= 0) {
-        throw new ValidationError('price threshold must be positive', {
-          threshold: config.threshold,
-        });
+        throw new InvalidThresholdError(config.type, config.threshold, 0, Infinity);
       }
     } else if (config.type === 'volume') {
       if (config.threshold <= 0) {
-        throw new ValidationError('volume threshold must be positive', {
-          threshold: config.threshold,
-        });
+        throw new InvalidThresholdError(config.type, config.threshold, 0, Infinity);
       }
     }
 
