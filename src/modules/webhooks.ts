@@ -19,6 +19,7 @@ import {
   WEBHOOK_VERIFY_PAYLOAD_TYPE,
 } from '@/types/webhooks';
 import { ValidationError, WebhookDisabledError, WebhookError } from '@/errors';
+import type { Logger } from '@/types/common';
 
 interface LoggerProvider {
   logger?: Logger;
@@ -293,7 +294,7 @@ export class WebhookModule {
             : {}),
         });
         if (isFinalAttempt) {
-          this.logger?.warn('webhooks.sendWebhook: delivery failed after retries', {
+          this.logger?.warn?.('webhooks.sendWebhook: delivery failed after retries', {
             webhookId,
             attempt,
             retryCount: config.maxRetries,
@@ -405,7 +406,7 @@ export class WebhookModule {
     } catch (err) {
       const latencyMs = Date.now() - start;
       const message = err instanceof Error ? err.message : String(err);
-      this.logger?.warn('webhooks.verifyWebhook: handshake failed', {
+      this.logger?.warn?.('webhooks.verifyWebhook: handshake failed', {
         webhookId,
         latencyMs,
         error: message,
@@ -622,7 +623,7 @@ export class WebhookModule {
     ) {
       state.disabled = true;
       state.disabledAt = Date.now();
-      this.logger?.warn('webhooks.sendWebhook: auto-disabled after consecutive failures', {
+      this.logger?.warn?.('webhooks.sendWebhook: auto-disabled after consecutive failures', {
         consecutiveFailures: state.consecutiveFailures,
         threshold: WEBHOOK_DISABLE_FAILURE_THRESHOLD,
       });

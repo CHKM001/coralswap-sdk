@@ -351,6 +351,7 @@ export class WebhookError extends CoralSwapSDKError {
  * checks remain backward-compatible.
  */
 export class WebhookDisabledError extends WebhookError {
+  override readonly code = "WEBHOOK_DISABLED";
   readonly webhookId: string;
   readonly consecutiveFailures: number;
 
@@ -366,8 +367,6 @@ export class WebhookDisabledError extends WebhookError {
     this.name = "WebhookDisabledError";
     this.webhookId = webhookId;
     this.consecutiveFailures = consecutiveFailures;
-    // Override the parent code with a more specific discriminator.
-    this.code = "WEBHOOK_DISABLED";
   }
 }
 
