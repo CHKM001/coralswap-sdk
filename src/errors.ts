@@ -340,6 +340,38 @@ export class WebhookError extends CoralSwapSDKError {
 }
 
 /**
+ * Raised by {@link WebhookModule.sendWebhook} when the targeted
+ * webhook has been auto-disabled after recording the configured
+ * number of consecutive delivery failures. Callers can match on
+ * this class — rather than string-matching — to programmatically
+ * decide whether to surface the failure to the user, retry on a
+ * backoff, or call {@link WebhookModule.enableWebhook}.
+ *
+ * Extends {@link WebhookError} so existing `instanceof WebhookError`
+ * checks remain backward-compatible.
+ */
+export class WebhookDisabledError extends WebhookError {
+  readonly webhookId: string;
+  readonly consecutiveFailures: number;
+
+  constructor(
+    webhookId: string,
+    consecutiveFailures: number,
+    details?: Record<string, unknown>,
+  ) {
+    super(
+      `webhook "${webhookId}" is disabled after ${consecutiveFailures} consecutive failures`,
+      { webhookId, consecutiveFailures, ...details },
+    );
+    this.name = "WebhookDisabledError";
+    this.webhookId = webhookId;
+    this.consecutiveFailures = consecutiveFailures;
+    // Override the parent code with a more specific discriminator.
+    this.code = "WEBHOOK_DISABLED";
+  }
+}
+
+/**
  * Extract pair address from error details or message.
  */
 function extractPairAddress(err: unknown): string {

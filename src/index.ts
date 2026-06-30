@@ -71,6 +71,7 @@ export {
   TokenListModule,
   RouterModule,
   TreasuryModule,
+  StopLossModule,
   AlertModule,
   LeaderboardModule,
   PortfolioModule,
@@ -78,6 +79,7 @@ export {
   StopLossModule,
   WebhookModule,
   TaxReportingModule,
+  RiskMetricsModule,
   GovernanceModule,
 } from "@/modules";
 export type { OptimalPath } from "@/modules/router";
@@ -164,5 +166,6 @@ export {
   CircuitBreakerError,
   SignerError,
   WebhookError,
+  WebhookDisabledError,
   mapError,
 } from "@/errors";
