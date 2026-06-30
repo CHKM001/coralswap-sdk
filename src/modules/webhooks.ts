@@ -1,10 +1,15 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+
 import {
   WebhookConfig,
   WebhookDelivery,
   WebhookDeliveryStatus,
   WebhookEndpointHealth,
   WebhookConfigV2,
+  WebhookConfigLegacy,
+  WebhookDeliveryLegacy,
+  WebhookDeliveryStatusLegacy,
+  WebhookEndpointHealthLegacy,
   StoredWebhook,
   WebhookDeliveryResult,
   WebhookEnvelope,
@@ -57,184 +62,92 @@ export class WebhookModule {
 
   async registerEndpoint(config: WebhookConfig): Promise<string> {
     if (this.endpoints.size >= MAX_ENDPOINTS) {
-      throw new ValidationError(
-        `Maximum of ${MAX_ENDPOINTS} webhook endpoints reached`,
-      );
+      throw new ValidationError(`Maximum of ${MAX_ENDPOINTS} webhook endpoints reached`);
     }
-
     if (!config.url.startsWith('https://')) {
-      throw new ValidationError('Webhook URL must use HTTPS', {
-        url: config.url,
-      });
+      throw new ValidationError('Webhook URL must use HTTPS', { url: config.url });
     }
-
     if (config.secret !== undefined && config.secret.trim().length === 0) {
       throw new ValidationError('webhook secret must not be empty');
     }
-
     if (config.headers) {
       const forbidden = ['content-type', 'x-coralswap-signature'];
       const keys = Object.keys(config.headers).map((k) => k.toLowerCase());
       const conflicts = forbidden.filter((f) => keys.includes(f));
       if (conflicts.length > 0) {
-        throw new ValidationError(
-          `Cannot override reserved headers: ${conflicts.join(', ')}`,
-        );
+        throw new ValidationError(`Cannot override reserved headers: ${conflicts.join(', ')}`);
       }
     }
-
     const id = `wh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    this.endpoints.set(id, {
-      ...config,
-      method: config.method ?? 'POST',
-      payloadFormat: config.payloadFormat ?? 'json',
-      enabled: config.enabled ?? true,
-    });
-
-    this.healthCache.set(id, {
-      webhookId: id,
-      url: config.url,
-      enabled: true,
-      totalDeliveries: 0,
-      successfulDeliveries: 0,
-      failedDeliveries: 0,
-      successRate: 1,
-      averageResponseTimeMs: 0,
-    });
-
+    this.endpoints.set(id, { ...config, method: config.method ?? 'POST', payloadFormat: config.payloadFormat ?? 'json', enabled: config.enabled ?? true });
+    this.healthCache.set(id, { webhookId: id, url: config.url, enabled: true, totalDeliveries: 0, successfulDeliveries: 0, failedDeliveries: 0, successRate: 1, averageResponseTimeMs: 0 });
     return id;
   }
 
-  async updateEndpoint(
-    webhookId: string,
-    updates: Partial<WebhookConfig>,
-  ): Promise<void> {
+  async updateEndpoint(webhookId: string, updates: Partial<WebhookConfig>): Promise<void> {
     const existing = this.endpoints.get(webhookId);
-    if (!existing) {
-      throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
-    }
+    if (!existing) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
     this.endpoints.set(webhookId, { ...existing, ...updates });
   }
 
   async deleteEndpoint(webhookId: string): Promise<void> {
-    if (!this.endpoints.has(webhookId)) {
-      throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
-    }
+    if (!this.endpoints.has(webhookId)) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
     this.endpoints.delete(webhookId);
     this.healthCache.delete(webhookId);
-    for (const [dId, d] of this.deliveries) {
-      if (d.webhookId === webhookId) this.deliveries.delete(dId);
-    }
+    for (const [dId, d] of this.deliveries) { if (d.webhookId === webhookId) this.deliveries.delete(dId); }
   }
 
-  async listEndpoints(): Promise<WebhookConfig[]> {
-    return Array.from(this.endpoints.values());
-  }
+  async listEndpoints(): Promise<WebhookConfig[]> { return Array.from(this.endpoints.values()); }
 
   async getEndpoint(webhookId: string): Promise<WebhookConfig> {
     const ep = this.endpoints.get(webhookId);
-    if (!ep) {
-      throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
-    }
+    if (!ep) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
     return ep;
   }
 
-  async deliver(
-    webhookId: string,
-    payload: Record<string, unknown>,
-  ): Promise<WebhookDelivery> {
+  async deliver(webhookId: string, payload: Record<string, unknown>): Promise<WebhookDelivery> {
     const endpoint = this.endpoints.get(webhookId);
-    if (!endpoint) {
-      throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
-    }
-    if (!endpoint.enabled) {
-      throw new ValidationError('Webhook endpoint is disabled');
-    }
-
+    if (!endpoint) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
+    if (!endpoint.enabled) throw new ValidationError('Webhook endpoint is disabled');
     const body = JSON.stringify(payload);
-    if (Buffer.byteLength(body, 'utf-8') > MAX_PAYLOAD_BYTES) {
-      throw new ValidationError(
-        `Payload exceeds ${MAX_PAYLOAD_BYTES} byte limit`,
-      );
-    }
-
+    if (Buffer.byteLength(body, 'utf-8') > MAX_PAYLOAD_BYTES) throw new ValidationError(`Payload exceeds ${MAX_PAYLOAD_BYTES} byte limit`);
     const deliveryId = `del_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-    const delivery: WebhookDelivery = {
-      id: deliveryId,
-      webhookId,
-      alertId: (payload['alertId'] as string) ?? 'unknown',
-      status: 'pending',
-      sentAt: Math.floor(Date.now() / 1000),
-      retryCount: 0,
-    };
-
+    const delivery: WebhookDelivery = { id: deliveryId, webhookId, alertId: (payload['alertId'] as string) ?? 'unknown', status: 'pending', sentAt: Math.floor(Date.now() / 1000), retryCount: 0 };
     this.deliveries.set(deliveryId, delivery);
     this.recordDeliveryAttempt(webhookId, delivery);
-
     await this.sendHttpRequest(endpoint, body, delivery);
-
     return this.deliveries.get(deliveryId)!;
   }
 
   async retryDelivery(deliveryId: string): Promise<WebhookDelivery> {
     const delivery = this.deliveries.get(deliveryId);
-    if (!delivery) {
-      throw new ValidationError(`Delivery not found: ${deliveryId}`);
-    }
-    if (
-      delivery.status === 'success' ||
-      delivery.status === 'exhausted'
-    ) {
-      throw new ValidationError(
-        `Cannot retry delivery in status ${delivery.status}`,
-      );
-    }
-
+    if (!delivery) throw new ValidationError(`Delivery not found: ${deliveryId}`);
+    if (delivery.status === 'success' || delivery.status === 'exhausted') throw new ValidationError(`Cannot retry delivery in status ${delivery.status}`);
     const endpoint = this.endpoints.get(delivery.webhookId);
-    if (!endpoint) {
-      throw new ValidationError(
-        `Webhook endpoint ${delivery.webhookId} not found`,
-      );
-    }
-
+    if (!endpoint) throw new ValidationError(`Webhook endpoint ${delivery.webhookId} not found`);
     const body = JSON.stringify(this.loadPayload(deliveryId));
     await this.sendHttpRequest(endpoint, body, delivery);
-
     return this.deliveries.get(deliveryId)!;
   }
 
   async getDelivery(deliveryId: string): Promise<WebhookDelivery> {
     const delivery = this.deliveries.get(deliveryId);
-    if (!delivery) {
-      throw new ValidationError(`Delivery not found: ${deliveryId}`);
-    }
+    if (!delivery) throw new ValidationError(`Delivery not found: ${deliveryId}`);
     return delivery;
   }
 
-  async listDeliveries(
-    webhookId: string,
-    limit: number = 50,
-  ): Promise<WebhookDelivery[]> {
+  async listDeliveries(webhookId: string, limit: number = 50): Promise<WebhookDelivery[]> {
     const result: WebhookDelivery[] = [];
-    for (const delivery of this.deliveries.values()) {
-      if (delivery.webhookId === webhookId) {
-        result.push(delivery);
-      }
-    }
+    for (const delivery of this.deliveries.values()) { if (delivery.webhookId === webhookId) result.push(delivery); }
     result.sort((a, b) => b.sentAt - a.sentAt);
     return result.slice(0, limit);
   }
 
   async getEndpointHealth(webhookId: string): Promise<WebhookEndpointHealth> {
     const health = this.healthCache.get(webhookId);
-    if (!health) {
-      throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
-    }
+    if (!health) throw new ValidationError(`Webhook endpoint not found: ${webhookId}`);
     return health;
   }
-
-  // V2 API methods
 
   async registerWebhook(
     url: string,

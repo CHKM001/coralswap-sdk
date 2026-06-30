@@ -11,8 +11,8 @@ export { RouterModule } from './router';
 export { TreasuryModule } from './treasury';
 export { StopLossModule } from './stop-loss';
 export type { TreasuryModuleOptions } from './treasury';
-export { AlertModule } from './alerts';
-export { WebhookModule } from './webhooks';
+export { AlertsModule, AlertModule } from './alerts';
+export { WebhooksModule, WebhookModule } from './webhooks';
 export { MonitoringModule } from './monitoring';
 export type {
   AlertMetric,

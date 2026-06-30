@@ -44,6 +44,43 @@ export interface WebhookEndpointHealth {
   lastDeliveryAt?: number;
 }
 
+export type WebhookDeliveryStatusLegacy = 'pending' | 'delivering' | 'success' | 'failed' | 'exhausted';
+
+export interface WebhookConfigLegacy {
+  url: string;
+  method?: WebhookMethod;
+  payloadFormat?: WebhookPayloadFormat;
+  headers?: Record<string, string>;
+  secret?: string;
+  label?: string;
+  alertFilter?: string[];
+  enabled?: boolean;
+}
+
+export interface WebhookDeliveryLegacy {
+  id: string;
+  webhookId: string;
+  alertId: string;
+  status: WebhookDeliveryStatusLegacy;
+  httpStatus?: number;
+  sentAt: number;
+  completedAt?: number;
+  retryCount: number;
+  errorMessage?: string;
+}
+
+export interface WebhookEndpointHealthLegacy {
+  webhookId: string;
+  url: string;
+  enabled: boolean;
+  totalDeliveries: number;
+  successfulDeliveries: number;
+  failedDeliveries: number;
+  successRate: number;
+  averageResponseTimeMs: number;
+  lastDeliveryAt?: number;
+}
+
 export type WebhookEventName = string;
 
 export interface WebhookConfigV2 {

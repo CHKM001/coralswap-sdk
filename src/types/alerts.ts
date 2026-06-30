@@ -42,6 +42,38 @@ export interface AlertSummary {
   firedLast24h: number;
 }
 
+export type AlertStatusLegacy = 'active' | 'paused' | 'fired' | 'acknowledged' | 'resolved' | 'archived';
+
+export interface AlertConfigLegacy {
+  name: string;
+  description?: string;
+  condition: AlertCondition;
+  threshold: bigint;
+  severity: AlertSeverity;
+  frequency?: AlertFrequency;
+  cooldownSeconds?: number;
+  monitoredAddresses: string[];
+  enabled?: boolean;
+}
+
+export interface AlertInstanceLegacy {
+  id: string;
+  config: AlertConfigLegacy;
+  status: AlertStatusLegacy;
+  currentValue?: bigint;
+  lastEvaluatedAt?: number;
+  lastFiredAt?: number;
+  fireCount: number;
+  lastMessage?: string;
+}
+
+export interface AlertSummaryLegacy {
+  total: number;
+  bySeverity: Record<AlertSeverity, number>;
+  byStatus: Record<AlertStatusLegacy, number>;
+  firedLast24h: number;
+}
+
 export type AlertDirection = 'above' | 'below';
 
 export type AlertStatusV2 = 'active' | 'triggered' | 'cleared';
