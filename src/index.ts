@@ -69,9 +69,12 @@ export {
   TokenListModule,
   RouterModule,
   TreasuryModule,
+  StopLossModule,
   AlertModule,
   LeaderboardModule,
   WebhookModule,
+  TaxReportingModule,
+  RiskMetricsModule,
 } from "@/modules";
 export type { OptimalPath } from "@/modules/router";
 export type { TWAPObservation, TWAPResult, TraderRanking, GetTopTradersOptions } from "@/modules";
@@ -156,5 +159,7 @@ export {
   FlashLoanFailedError,
   CircuitBreakerError,
   SignerError,
+  WebhookError,
+  WebhookDisabledError,
   mapError,
 } from "@/errors";
